@@ -11,6 +11,7 @@
  * 
  */
 namespace bstd{
+namespace ds{
 template<typename T>
 class tree{
 
@@ -147,5 +148,5 @@ class tree{
 
 
 };
-
+}
 }

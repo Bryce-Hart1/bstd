@@ -1,3 +1,4 @@
+
 #include "tsVector.hpp"
 #include <string>
 #include <functional>
@@ -16,8 +17,8 @@ using strView = std::string_view;
  * 
  * 
  */
-
-namespace threadsafe{
+namespace ds{
+namespace ts{
 
     template <typename key, typename value>
     class hashmap{
@@ -77,4 +78,5 @@ namespace threadsafe{
 
 
 
+}
 }

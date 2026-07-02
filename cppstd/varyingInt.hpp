@@ -10,6 +10,9 @@
  * This is only worth it if most of the numbers needed should'nt have decode overhead 
  * 
  */
+
+namespace bstd{
+namespace store{
 class VarInt {
 public:
     VarInt(uint64_t value = 0) { encode(value); }
@@ -66,3 +69,11 @@ private:
         }
     }
 };
+
+
+
+
+
+
+}
+}

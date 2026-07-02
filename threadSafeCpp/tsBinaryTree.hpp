@@ -7,8 +7,20 @@
 #include <exception>
 #include <iostream>
 
+
+namespace bstd{
+namespace ds{
+namespace ts{
+
+
 using sizeT = std::size_t;
 
+
+
+/**
+ * Bryce Hart mutexlock that is used in helper functions throughout.
+ * depends on std shared mutex.
+ */
 struct mutexLock{
     private:
     std::shared_mutex mtx;
@@ -25,6 +37,11 @@ struct mutexLock{
 
 };
 
+/**
+ * Bryce Hart
+ * spinlock. Smaller but burns cpu
+ * 
+ */
 struct spinLock{
     private:
     std::atomic_flag atomic_flag = ATOMIC_FLAG_INIT;
@@ -41,7 +58,6 @@ struct spinLock{
 
 };
 
-namespace threadSafe{
     template <typename numType>
 
 
@@ -185,4 +201,7 @@ namespace threadSafe{
 
             
     };
+}
+
+}
 }

@@ -1,3 +1,4 @@
+
 #include <memory>
 #include <string>
 #include <mutex>
@@ -16,8 +17,9 @@
 using sizeT = std::size_t;
 using string = std::string;
 using optFlag = std::optional<bool>;
-
-namespace threadsafe{
+namespace bstd{
+namespace ds{
+namespace ts{
 
 class Trie{
     public:
@@ -331,3 +333,6 @@ struct node {
     }; //end of trie
 
 }
+}
+
+}//bstd

@@ -12,7 +12,7 @@
 #pragma once
 
 namespace bstd{
-
+namespace spell{
 /**
 * Autocorrect V1 Bryce Hart
 * @attention a autocorrect filter that can be applied to any string.
@@ -208,6 +208,6 @@ class autoCorrectFilter{
 
 
 
-
+}//spell
 
 } //bstd

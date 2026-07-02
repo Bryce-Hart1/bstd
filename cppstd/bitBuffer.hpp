@@ -11,6 +11,7 @@ namespace bstd {
 * compared to vector where your are not given complete access and are given a proxy object. 
 *
 */
+namespace bit{
 class BitBuffer {
     using u8 = uint8_t;
     using size_t = std::size_t;
@@ -159,4 +160,5 @@ public:
     }
 };
 
+}
 } // namespace bstd

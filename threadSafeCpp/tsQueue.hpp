@@ -6,7 +6,7 @@
  * @attention a threadsafe queue
  * Requires import of threadsafe vector
  */
-namespace threadsafe{
+namespace ts{
 
         template <typename T> class queue{
         friend class threadsafe::vec<T>;

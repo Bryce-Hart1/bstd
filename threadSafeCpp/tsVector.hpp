@@ -7,14 +7,17 @@
 #include <cstddef>
 #include "exceptions.hpp"
 
-/** @attention complete vector implemenation
- * My goal with this project is to provide a completely safe multithreaded vector implemenation with all functions mostly from scratch
+/** Bryce Hart
+ * @attention complete vector implementation
+ * My goal with this project is to provide a completely safe multithreaded vector 
+ * implementation with all functions mostly from scratch
  *
  * 
  */
 
-
-namespace threadsafe{
+namespace bstd{
+ namespace ds{
+namespace ts{
 
     /** @class vec
     * threadsafe vector implementation
@@ -317,4 +320,7 @@ namespace threadsafe{
         }
 
     };
-}
+}//ts
+
+ }//ds
+}//bstd

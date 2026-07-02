@@ -1,10 +1,12 @@
 #include "tsVector.hpp"
 
+namespace bstd{
+namespace ds{
+
 template <typename T>
 using vec = threadsafe::vec<T>;
 
-
-namespace threadsafe{
+namespace ts{
 
     template <typename T> class stack{
         friend class vec<T>;
@@ -51,5 +53,8 @@ namespace threadsafe{
 
 
 
+
+}
+}
 
 }
