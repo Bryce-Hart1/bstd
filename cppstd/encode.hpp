@@ -35,9 +35,9 @@ class huffmanTree {
     };
 
     std::shared_ptr<Node> root;
-    std::map<char, bstd::BitBuffer> codeTable;
+    std::map<char, bstd::bit::BitBuffer> codeTable;
 
-    void buildCodes(const std::shared_ptr<Node>& node, bstd::BitBuffer code) {
+    void buildCodes(const std::shared_ptr<Node>& node, bstd::bit::BitBuffer code) {
         if (!node) return;
         if (node->isLeaf()) {
             if (code.empty()) code.push(false);   // single-symbol edge case
@@ -67,7 +67,7 @@ class huffmanTree {
         }
     }
 
-    std::shared_ptr<Node> deserializeNode(const bstd::BitBuffer& bits, size_t& idx) {
+    std::shared_ptr<Node> deserializeNode(const bstd::bit::BitBuffer& bits, size_t& idx) {
         if (idx >= bits.size())
             throw std::runtime_error("Truncated tree bitstream");
 
@@ -120,14 +120,14 @@ public:
     }
 
     // Constructor 2 – rebuild from a serialized bitstream
-    explicit huffmanTree(const bstd::BitBuffer& bits) {
+    explicit huffmanTree(const bstd::bit::BitBuffer& bits) {
         size_t idx = 0;
         root = deserializeNode(bits, idx);
         buildCodes(root, {});
     }
 
     /** Returns the Huffman bit-code for a single character. */
-    bstd::BitBuffer what_is_char(char x) const {
+    bstd::bit::BitBuffer what_is_char(char x) const {
         auto it = codeTable.find(x);
         if (it == codeTable.end()){
             throw std::runtime_error(std::string("character [") + x + "] not found in tree");
@@ -161,8 +161,8 @@ public:
 };
 
 //Free functions
-bstd::BitBuffer Huffman_Encode(const huffmanTree& tree, const std::string& encodeStr) {
-    bstd::BitBuffer rtn;
+bstd::bit::BitBuffer Huffman_Encode(const huffmanTree& tree, const std::string& encodeStr) {
+    bstd::bit::BitBuffer rtn;
     for (char c : encodeStr) {
         rtn.push(tree.what_is_char(c));
     }
@@ -172,11 +172,11 @@ std::string Huffman_Decode(const huffmanTree& tree, const std::vector<bool>& dec
     return tree.decode(decodeStr);
 }
 
-bstd::BitBuffer LM77_Encode(const std::string& incoming){
+bstd::bit::BitBuffer LM77_Encode(const std::string& incoming){
 
 }
 
-std::string LM77_Decode(const bstd::BitBuffer& incoming){
+std::string LM77_Decode(const bstd::bit::BitBuffer& incoming){
     for(const bool& bit : incoming){ 
         if(bit){ //back reference
             

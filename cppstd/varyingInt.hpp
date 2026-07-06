@@ -12,10 +12,11 @@
  */
 
 namespace bstd{
-namespace store{
+namespace bit{
 class VarInt {
 public:
-    VarInt(uint64_t value = 0) { encode(value); }
+    VarInt(uint64_t value = 0) { 
+        encode(value); }
 
     // Decode back to a plain integer
     uint64_t value() const {
@@ -69,10 +70,6 @@ private:
         }
     }
 };
-
-
-
-
 
 
 }

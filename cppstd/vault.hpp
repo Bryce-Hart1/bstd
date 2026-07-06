@@ -1,264 +1,120 @@
-#include <cstdint>
-#include <cstdio>
-#include <cstring> //all 3 for AES
-
+#include <fstream> //for file I/O in vault
+#include <mutex> //for lock around file
+#include <string>
+#include "writeBin.hpp"
+#include <vector>
 namespace bstd{
 namespace store{
-namespace cypher{
-
-/**
- * Bryce Hart 7-2-26
- * This cypher is for EDUCATIONAL PURPOSES ONLY!
- * I am NOT responsible for damages caused by using this cypher in 
- * production systems.
- */
-class AES_256{
-    private:
-// AES-256 parameters
-static const int Nb = 4;   // columns in the state (always 4 for AES)
-static const int Nk = 8;   // 256-bit key = 8 32-bit words
-static const int Nr = 14;  // number of rounds, 14 rounds for AES-256
-
-// The S-box: the fixed nonlinear substitution table (SubBytes).
-// Byte x -> sbox[x]. Derived from the multiplicative inverse in GF(2^8)
-// followed by an affine transform; here we just hardcode the 256 values.
-const uint8_t sbox[256] = {
-  0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
-  0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
-  0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
-  0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
-  0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
-  0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
-  0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
-  0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
-  0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
-  0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
-  0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
-  0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
-  0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
-  0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
-  0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
-  0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16
-};
-
-// Inverse S-box, for decryption (InvSubBytes).
-const uint8_t inv_sbox[256] = {
-  0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38,0xbf,0x40,0xa3,0x9e,0x81,0xf3,0xd7,0xfb,
-  0x7c,0xe3,0x39,0x82,0x9b,0x2f,0xff,0x87,0x34,0x8e,0x43,0x44,0xc4,0xde,0xe9,0xcb,
-  0x54,0x7b,0x94,0x32,0xa6,0xc2,0x23,0x3d,0xee,0x4c,0x95,0x0b,0x42,0xfa,0xc3,0x4e,
-  0x08,0x2e,0xa1,0x66,0x28,0xd9,0x24,0xb2,0x76,0x5b,0xa2,0x49,0x6d,0x8b,0xd1,0x25,
-  0x72,0xf8,0xf6,0x64,0x86,0x68,0x98,0x16,0xd4,0xa4,0x5c,0xcc,0x5d,0x65,0xb6,0x92,
-  0x6c,0x70,0x48,0x50,0xfd,0xed,0xb9,0xda,0x5e,0x15,0x46,0x57,0xa7,0x8d,0x9d,0x84,
-  0x90,0xd8,0xab,0x00,0x8c,0xbc,0xd3,0x0a,0xf7,0xe4,0x58,0x05,0xb8,0xb3,0x45,0x06,
-  0xd0,0x2c,0x1e,0x8f,0xca,0x3f,0x0f,0x02,0xc1,0xaf,0xbd,0x03,0x01,0x13,0x8a,0x6b,
-  0x3a,0x91,0x11,0x41,0x4f,0x67,0xdc,0xea,0x97,0xf2,0xcf,0xce,0xf0,0xb4,0xe6,0x73,
-  0x96,0xac,0x74,0x22,0xe7,0xad,0x35,0x85,0xe2,0xf9,0x37,0xe8,0x1c,0x75,0xdf,0x6e,
-  0x47,0xf1,0x1a,0x71,0x1d,0x29,0xc5,0x89,0x6f,0xb7,0x62,0x0e,0xaa,0x18,0xbe,0x1b,
-  0xfc,0x56,0x3e,0x4b,0xc6,0xd2,0x79,0x20,0x9a,0xdb,0xc0,0xfe,0x78,0xcd,0x5a,0xf4,
-  0x1f,0xdd,0xa8,0x33,0x88,0x07,0xc7,0x31,0xb1,0x12,0x10,0x59,0x27,0x80,0xec,0x5f,
-  0x60,0x51,0x7f,0xa9,0x19,0xb5,0x4a,0x0d,0x2d,0xe5,0x7a,0x9f,0x93,0xc9,0x9c,0xef,
-  0xa0,0xe0,0x3b,0x4d,0xae,0x2a,0xf5,0xb0,0xc8,0xeb,0xbb,0x3c,0x83,0x53,0x99,0x61,
-  0x17,0x2b,0x04,0x7e,0xba,0x77,0xd6,0x26,0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d
-};
-
-// Round constants used in key expansion (only the first byte of each word).
-const uint8_t Rcon[15] = {
-  0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36,0x6c,0xd8,0xab,0x4d
-};
-
-// GF(2^8) multiplication (used by MixColumns). "Russian peasant" style:
-// multiply a*b in the AES field with reduction polynomial 0x11b.
-static uint8_t gmul(uint8_t a, uint8_t b) {
-  uint8_t p = 0;
-  for (int i = 0; i < 8; ++i) {
-    if (b & 1) p ^= a;
-    uint8_t hi = a & 0x80;
-    a <<= 1;
-    if (hi) a ^= 0x1b;   // reduce modulo x^8 + x^4 + x^3 + x + 1
-    b >>= 1;
-  }
-  return p;
-}
-
-// Key expansion: turn the 32-byte key into 4*(Nr+1) = 60 round-key words
-// (240 bytes). This is the AES-256 schedule; note the extra SubWord step
-
-void key_expansion(const uint8_t key[32], uint8_t roundKeys[240]) {
-  memcpy(roundKeys, key, 32);          // first 8 words = the key itself
-  uint8_t temp[4];
-
-  for (int i = Nk; i < Nb * (Nr + 1); ++i) {
-    memcpy(temp, roundKeys + (i - 1) * 4, 4);
-
-    if (i % Nk == 0) {
-      // RotWord: cyclic left shift of the 4 bytes
-      uint8_t t = temp[0];
-      temp[0] = temp[1]; temp[1] = temp[2]; temp[2] = temp[3]; temp[3] = t;
-      // SubWord: apply S-box to each byte
-      for (int j = 0; j < 4; ++j) temp[j] = sbox[temp[j]];
-      // XOR round constant into the first byte
-      temp[0] ^= Rcon[i / Nk];
-    } else if (i % Nk == 4) {
-      // AES-256-only: extra SubWord (no rotate, no Rcon)
-      for (int j = 0; j < 4; ++j) temp[j] = sbox[temp[j]];
-    }
-
-    for (int j = 0; j < 4; ++j)
-      roundKeys[i * 4 + j] = roundKeys[(i - Nk) * 4 + j] ^ temp[j];
-  }
-}
-
-// The four round operations. State is 16 bytes in column-major order
-// (state[r + 4*c] = row r, column c), matching the FIPS-197 spec.
-void add_round_key(uint8_t s[16], const uint8_t* rk) {
-  for (int i = 0; i < 16; ++i) s[i] ^= rk[i];
-}
-
-void sub_bytes(uint8_t s[16]) {
-  for (int i = 0; i < 16; ++i) s[i] = sbox[s[i]];
-}
-void inv_sub_bytes(uint8_t s[16]) {
-  for (int i = 0; i < 16; ++i) s[i] = inv_sbox[s[i]];
-}
-
-void shift_rows(uint8_t s[16]) {
-  uint8_t t;
-  // row 1: shift left by 1
-  t = s[1]; s[1]=s[5]; s[5]=s[9]; s[9]=s[13]; s[13]=t;
-  // row 2: shift left by 2
-  t = s[2]; s[2]=s[10]; s[10]=t; t = s[6]; s[6]=s[14]; s[14]=t;
-  // row 3: shift left by 3 (== right by 1)
-  t = s[15]; s[15]=s[11]; s[11]=s[7]; s[7]=s[3]; s[3]=t;
-}
-void inv_shift_rows(uint8_t s[16]) {
-  uint8_t t;
-  t = s[13]; s[13]=s[9]; s[9]=s[5]; s[5]=s[1]; s[1]=t;
-  t = s[2]; s[2]=s[10]; s[10]=t; t = s[6]; s[6]=s[14]; s[14]=t;
-  t = s[3]; s[3]=s[7]; s[7]=s[11]; s[11]=s[15]; s[15]=t;
-}
-
-void mix_columns(uint8_t s[16]) {
-  for (int c = 0; c < 4; ++c) {
-    uint8_t* col = s + 4 * c;
-    uint8_t a0=col[0], a1=col[1], a2=col[2], a3=col[3];
-    col[0] = gmul(a0,2) ^ gmul(a1,3) ^ a2 ^ a3;
-    col[1] = a0 ^ gmul(a1,2) ^ gmul(a2,3) ^ a3;
-    col[2] = a0 ^ a1 ^ gmul(a2,2) ^ gmul(a3,3);
-    col[3] = gmul(a0,3) ^ a1 ^ a2 ^ gmul(a3,2);
-  }
-}
-
-void inv_mix_columns(uint8_t s[16]) {
-  for (int c = 0; c < 4; ++c) {
-    uint8_t* col = s + 4 * c;
-    uint8_t a0=col[0], a1=col[1], a2=col[2], a3=col[3];
-    col[0] = gmul(a0,14) ^ gmul(a1,11) ^ gmul(a2,13) ^ gmul(a3,9);
-    col[1] = gmul(a0,9)  ^ gmul(a1,14) ^ gmul(a2,11) ^ gmul(a3,13);
-    col[2] = gmul(a0,13) ^ gmul(a1,9)  ^ gmul(a2,14) ^ gmul(a3,11);
-    col[3] = gmul(a0,11) ^ gmul(a1,13) ^ gmul(a2,9)  ^ gmul(a3,14);
-  }
-}
-
-public:
-// Encrypt / decrypt a single 16-byte block.
-void aes256_encrypt_block(const uint8_t in[16], uint8_t out[16], const uint8_t roundKeys[240]) {
-  uint8_t s[16];
-  memcpy(s, in, 16);
-
-  add_round_key(s, roundKeys);                 // initial round key
-  for (int round = 1; round < Nr; ++round) {   // 13 main rounds
-    sub_bytes(s);
-    shift_rows(s);
-    mix_columns(s);
-    add_round_key(s, roundKeys + round * 16);
-  }
-  sub_bytes(s);                                // final round: no MixColumns
-  shift_rows(s);
-  add_round_key(s, roundKeys + Nr * 16);
-
-  memcpy(out, s, 16);
-}
-
-public: 
-void aes256_decrypt_block(const uint8_t in[16], uint8_t out[16],
-                          const uint8_t roundKeys[240]) {
-  uint8_t s[16];
-  memcpy(s, in, 16);
-
-  add_round_key(s, roundKeys + Nr * 16);
-  for (int round = Nr - 1; round >= 1; --round) {
-    inv_shift_rows(s);
-    inv_sub_bytes(s);
-    add_round_key(s, roundKeys + round * 16);
-    inv_mix_columns(s);
-  }
-  inv_shift_rows(s);
-  inv_sub_bytes(s);
-  add_round_key(s, roundKeys);
-
-  memcpy(out, s, 16);
-}
-
-/**  CTR mode: turns the block cipher into a stream cipher, so it can encrypt
-// data of any length (not just 16-byte multiples), with no padding needed.
-//
-// How it works:
-//   1. Start with a 16-byte counter block (nonce/IV — must be unique per
-//      message under a given key, but does NOT need to be secret).
-//   2. Encrypt the counter block with AES -> keystream block.
-//   3. XOR the keystream with plaintext (or ciphertext) to get the output.
-//   4. Increment the counter (treated as one big 128-bit big-endian integer,
-//      per NIST SP 800-38A) and repeat for the next 16 bytes.
-//
-// Encryption and decryption are the SAME operation, since XOR is its own
-// inverse — that symmetry is why CTR is popular and simple.
-//
-// IMPORTANT: this is encryption only, with no integrity/authentication.
-// An attacker who can modify the ciphertext can flip corresponding
-// plaintext bits undetected. For anything where tampering matters, pair
-// this with a MAC (e.g. HMAC-SHA256 over the ciphertext) — "encrypt-then-MAC".
-*/
-static void increment_counter(uint8_t counter[16]) {
-  // Treat the 16 bytes as one big-endian integer and add 1, with carry
-  // propagating from the last byte toward the first.
-  for (int i = 15; i >= 0; --i) {
-    if (++counter[i] != 0) break;  // no overflow into the next byte, done
-  }
-}
-
-void aes256_ctr_crypt(const uint8_t* input, uint8_t* output, 
-                      size_t len, const uint8_t roundKeys[240], 
-                      const uint8_t iv[16]) {
-  uint8_t counter[16];
-  memcpy(counter, iv, 16);
-
-  uint8_t keystream[16];
-  size_t offset = 0;
-
-  while (offset < len) {
-    aes256_encrypt_block(counter, keystream, roundKeys);
-
-    size_t chunk = (len - offset < 16) ? (len - offset) : 16;
-    for (size_t i = 0; i < chunk; ++i)
-      output[offset + i] = input[offset + i] ^ keystream[i];
-
-    increment_counter(counter);
-    offset += chunk;
-  }
-}
-};//End AES
-
-}//namespace cypher
-
-
-
 /**
  * July 2nd 26
- * A even more lightweight file storage, basically SQL-lite with AES-256 encryption 
- * on-top 
- * 
+ * A even more lightweight file storage, basically SQL-lite.
+ * multithreaded.
+ * Made for learning purposes mainly. Just use SQL-lite if you need something serious.
+ * dependencies -
+ * fstream (for file IO)
+ * Mutex (for std::mutex)
+ * Thread (to assign thread work)
+ * writeBin (for writing binary to file)
  */
 class vault{
+using usize = std::size_t;
+using u16 = u_int16_t;
+using u32 = u_int32_t;
+
+  private:
+    std::string _name;
+    std::fstream _file;
+    usize _pageSize;
+    std::mutex _lock;
+    u16 _magic;
+    usize _pageCount;
+    u16 _tableAmount;
+    
+
+    void updatePageCount(){
+      this->_pageCount++; //increment page amount
+
+    }
+
+    static constexpr u16 MAGIC = 3214;
+
+    // writes the header fields to offset 0, in a fixed order
+    void writeHeaderInit(){
+      _file.seekp(0);
+      bstd::bit::writeBinary(_magic, _file);
+      bstd::bit::writeBinary(_pageSize, _file);
+      bstd::bit::writeBinary(_pageCount, _file);
+      bstd::bit::writeBinary(_tableAmount, _file);
+    }
+
+    // reads the header fields back from offset 0, same order as writeHeader
+    void readHeader(){
+      _file.seekg(0);
+      _magic = bstd::bit::readBinary<u16>(_file);
+      if(_magic != MAGIC){
+        throw std::runtime_error("vault: bad magic number, not a vault file: " + _name);
+      }
+      _pageSize = bstd::bit::readBinary<usize>(_file);
+      _pageCount = bstd::bit::readBinary<usize>(_file);
+      _tableAmount = bstd::bit::readBinary<u16>(_file);
+    }
+    private:
+    //points at where the next write should occur 
+    usize point_at() const{
+      
+    }
+
+
+    public:
+
+    /**
+     * Define a new vault
+     * @param pagesize - size of page in file, in bytes
+     */
+    vault(const usize pagesize, std::string name): _name(std::move(name)), _file(_name, std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc), _pageSize(pagesize){
+      _magic = MAGIC;
+      _pageCount = 0;
+      _tableAmount = 0;
+      writeHeaderInit();
+    }
+
+    public:
+    /**
+     * Open an existing vault file and load its header.
+     */
+    explicit vault(std::string name): _name(std::move(name)), 
+    _file(_name, std::ios::in | std::ios::out | std::ios::binary), 
+    _pageSize(0){
+      if(!_file)
+        throw std::runtime_error("vault: could not open file: " + _name);
+    }
+
+    public:
+    bool doesTableExist(const std::string_view &table) {
+      try{
+        readHeader(); //update header pos
+      }catch(const std::exception& e){
+        std::cerr << e.what() << std::endl;
+      }
+
+    }
+
+
+    public:
+    void write(const std::string &index, const std::string_view &message){
+      if(doesTableExist(index)){
+        //allocate size 
+        usize messageInBytes = sizeof(message);
+
+
+      }
+      throw std::runtime_error("table requested: " + index + " does not exist");
+    }
+
+    //if process running fails/exits, reclaims written files in memory
+    void reclaim(){
+
+    }
 
 };
 
