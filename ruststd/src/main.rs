@@ -2,6 +2,7 @@
 
 mod simpleHash;
 mod fixedDataStorage;
+mod bits;
 
 use std::{collections::HashMap};
 
