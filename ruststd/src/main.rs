@@ -1,6 +1,7 @@
 #![allow(unused, non_snake_case, non_ascii_idents, non_camel_case_types)]
 
 mod simpleHash;
+mod fixedDataStorage;
 
 use std::{collections::HashMap};
 
