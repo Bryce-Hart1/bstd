@@ -9,6 +9,12 @@ impl BitString {
         BitString { vec: Vec::new() }
     }
 
+    /// A run of `len` zero bits. Useful when a value has to occupy a fixed
+    /// width on disk instead of being sized to its highest set bit.
+    pub fn with_len(len: usize) -> Self {
+        BitString { vec: vec![false; len] }
+    }
+
     pub fn len(&self) -> usize {
         self.vec.len()
     }
@@ -68,6 +74,74 @@ impl BitString {
         }
     }
 
+    /// Index of the highest set bit, or `None` when every bit is zero.
+    ///
+    /// This is the honest measure of "how many bits does this value actually
+    /// need" — `len()` is not, because `set_as_number` always produces 32 bits
+    /// regardless of the magnitude stored in them.
+    pub fn highest_set_bit(&self) -> Option<usize> {
+        self.vec.iter().rposition(|&b| b)
+    }
+
+    /// Overwrite with exactly `width` bits of `value`, LSB at index 0.
+    /// Bits of `value` at or above `width` are dropped, so the caller is
+    /// expected to have range-checked first via [`BitString::highest_set_bit`].
+    pub fn set_as_u64_width(&mut self, value: u64, width: usize) {
+        self.vec.clear();
+        for i in 0..width {
+            self.vec.push(if i < 64 { (value >> i) & 1 == 1 } else { false });
+        }
+    }
+
+    /// Interpret the bits as an unsigned integer, LSB at index 0.
+    /// `None` when a set bit sits at index 64 or above, since the value
+    /// would not survive the conversion.
+    pub fn as_u64(&self) -> Option<u64> {
+        match self.highest_set_bit() {
+            Some(hi) if hi >= 64 => None,
+            _ => {
+                let mut out: u64 = 0;
+                for (i, &b) in self.vec.iter().enumerate().take(64) {
+                    if b {
+                        out |= 1u64 << i;
+                    }
+                }
+                Some(out)
+            }
+        }
+    }
+
+    /// Read `len` bits starting at bit offset `bit_off` out of a packed slice,
+    /// LSB-first within each byte to match [`BitString::to_bytes`].
+    /// Bits past the end of `bytes` read as zero rather than panicking, so a
+    /// truncated tail decodes instead of blowing up.
+    pub fn slice_from_bytes(bytes: &[u8], bit_off: usize, len: usize) -> BitString {
+        let mut out = BitString { vec: Vec::with_capacity(len) };
+        for i in 0..len {
+            let bit = bit_off + i;
+            let byte = bit / 8;
+            out.vec.push(match bytes.get(byte) {
+                Some(b) => (b >> (bit % 8)) & 1 == 1,
+                None => false,
+            });
+        }
+        out
+    }
+
+    /// Write these bits into a packed buffer at bit offset `bit_off`, same
+    /// LSB-first convention. Only sets bits — the destination range is assumed
+    /// to start zeroed, which it does for the freshly allocated row buffers
+    /// this exists to serve. Panics if the buffer is too small, since that is a
+    /// layout arithmetic bug, not a runtime condition.
+    pub fn write_into_bytes(&self, bytes: &mut [u8], bit_off: usize) {
+        for (i, &b) in self.vec.iter().enumerate() {
+            if b {
+                let bit = bit_off + i;
+                bytes[bit / 8] |= 1 << (bit % 8);
+            }
+        }
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![0u8; (self.vec.len() + 7) / 8];
         for (i, &bit) in self.vec.iter().enumerate() {
@@ -104,6 +178,32 @@ impl BitString {
 impl Default for BitString {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Clone for BitString {
+    fn clone(&self) -> Self {
+        BitString { vec: self.vec.clone() }
+    }
+}
+
+/// Width-sensitive on purpose: an 8-bit zero and an empty BitString are
+/// different values here, because on disk they mean "the field holds 0" and
+/// "the field holds nothing". Comparing `to_bytes()` would conflate them.
+impl PartialEq for BitString {
+    fn eq(&self, other: &Self) -> bool {
+        self.vec == other.vec
+    }
+}
+
+impl Eq for BitString {}
+
+/// Includes the length, because two BitStrings that print the same can still
+/// be different values — an 8-bit zero and an empty one both display as
+/// nothing useful, and assertion output needs to tell them apart.
+impl fmt::Debug for BitString {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "BitString(len={}, {})", self.vec.len(), self)
     }
 }
 
