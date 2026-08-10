@@ -1,3 +1,4 @@
+#pragma once
 #include <cstdint>
 #include <fstream>
 #include <vector>
@@ -67,6 +68,4 @@ std::vector<T> readBinary(std::fstream& file, size_t count){
         values.push_back(readBinary<T>(file));
     return values;
 }
-
-}
-}
+}}
