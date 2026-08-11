@@ -3,14 +3,15 @@
 #include <cstring> //all 3 for AES
 
 namespace bstd{
-namespace storage{
+namespace store{
 namespace cypher{
 
 /**
  * Bryce Hart 7-2-26
  * This cypher is for EDUCATIONAL PURPOSES ONLY!
  * I am NOT responsible for damages caused by using this cypher in 
- * production systems.
+ * production systems. This project serves as learning tool for me, 
+ * and also a demo of this cypher in action
  */
 class AES_256{
     private:
