@@ -1,13 +1,15 @@
 #pragma once
 #include <array>
 #include <chrono>
-#include <cstdint>
 #include <cstdio>
 #include <ctime>
-#include <ratio>
 #include <string>
 #include <string_view>
 #include <version>
+
+//might not need based on version:
+#include <ratio>
+#include <cstdint>
 
 //toolchain check:
 #if defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907L
