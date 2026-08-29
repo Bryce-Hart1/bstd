@@ -2,25 +2,22 @@
 #include <cstdint>
 #include <vector>
 #include <array>
-#include <exception>
 #include <string>
 #include <string_view>
-#include <algorithm>
 #include <cctype>
 #include <map>
 #include <optional>
 #pragma once
 
 namespace bstd{
-namespace spell{
+namespace form{
 /**
-* Autocorrect V1 Bryce Hart
+* Autocorrect V3 @author Bryce Hart @date 8-4-26
 * @attention a autocorrect filter that can be applied to any string.
 * This is meant to be a compromise between symspell to allow for smaller 
 * dictionary sizes, while also being highly accurate. 
 * More of a greedy algorithm thats fully not Damerau Levenshien and gets
 * the job done on smaller subsets
-* 
 */
 class autoCorrectFilter{
     using u8 = uint8_t;
@@ -31,11 +28,15 @@ class autoCorrectFilter{
     std::size_t _sensitivity;
     std::map<std::size_t, std::vector<std::string_view>> _dictionary;//holds size of string (key) to vector of strings
 
-        // Bryce Hart  last changed: 6/24/2026 by: Claude
+        // A non-letter can never match anything on the QWERTY grid, so out-of-range
+        // input scores this instead of throwing: the control socket feeds raw user
+        // bytes through fix(), and an exception here would escape the admin thread
+        // and terminate the whole process.
+        static constexpr u8 kMaxDistance = 0xFF;
+
         // Returns the QWERTY key-distance between two letters via the lookup grid.
-        // (Fixed: the a/b bounds checks were nested with mismatched braces, which
-        // left a control path with no return; un-nested them and removed an unused
-        // local so every path either throws on bad input or returns a distance.)
+        // Characters outside a-z score kMaxDistance, which blows any realistic
+        // sensitivity budget so the word is simply "no match".
         u8 findLetterDistance(char in, char d_in) const{
 
             constexpr u8 ascii_a = 97;
@@ -72,18 +73,14 @@ class autoCorrectFilter{
             /* z */{1,4,2,2,3,3,4,5,7,6,7,8,6,5,8,9,3,3,1,4,6,3,2,1,5,0},
             }};
 
-            if(a < 0 || a > 25)[[unlikely]]{
-                throw std::runtime_error("index " + std::to_string(a) + " of lookup grid is out of bounds");
-            }
-            if(b < 0 || b > 25)[[unlikely]]{
-                throw std::runtime_error("index " + std::to_string(b) + " of lookup grid is out of bounds");
+            if(a < 0 || a > 25 || b < 0 || b > 25)[[unlikely]]{
+                return kMaxDistance;
             }
             return lookupGrid[a][b];
         }
         
 
         //helper for main fix function, finds distance for every word
-        // Bryce Hart
         // Scores how far `input` is from a candidate word. Walks both strings with
         // independent cursors so a single mis-alignment doesn't wreck every later
         // position. On a mismatch it tries, in order: an adjacent transposition
@@ -99,9 +96,7 @@ class autoCorrectFilter{
         constexpr usize kGapCost  = 2; //one inserted/deleted letter
 
         //case-insensitive "same letter?" test, reusing the grid (0 == identical)
-        const auto same = [this](char x, char y){ 
-            return findLetterDistance(x, y) == 0; 
-        };
+        const auto same = [this](char x, char y){ return findLetterDistance(x, y) == 0; };
 
         const usize n = input.size();
         const usize m = wordToCompare.size();
@@ -149,20 +144,44 @@ class autoCorrectFilter{
 
 
     public:
-        inline autoCorrectFilter(usize sensitivity, std::vector<std::string_view> dictionary){
+        inline autoCorrectFilter(std::size_t sensitivity, std::vector<std::string_view> dictionary){
+            // Store the sensitivity.
             _sensitivity = sensitivity;
             //put all of them into the buckets of length
             for (std::string_view str : dictionary){
                 _dictionary[str.length()].push_back(str);
             }
-}
+        }
+
+        /**
+        * add @param word to dictionary
+        * @throws standard std::map exceptions if failed
+         */
+        inline void addToDictionary(std::string_view word){
+            _dictionary[word.length()].push_back(word);
+        }
+
+        inline std::size_t size(){
+            return _dictionary.size();
+        }
+        inline bool isInDictionary(std::string_view word){
+            if(!word.contains(word.length())){
+                return false;
+            }
+            std::vector<std::string_view> vec = _dictionary.at(word.length());
+            for(const auto& w : vec){
+                if(w == word){
+                    return true;
+                }
+            }
+            return false;
+        }
 
     //attempts to fix a word for the sensitivity provided
     std::string fix(std::string_view str) const{
         //init min range, max range
         const usize strLen = str.length();
 
-        // Bryce Hart  last changed: 6/24/2026 by: Claude
         // Length window to search: words within +/- sensitivity of the input
         // length. (Fixed: `strLen - _sensitivity < 0` can never be true for an
         // unsigned type and would underflow, and both branches declared a throwaway
@@ -171,11 +190,7 @@ class autoCorrectFilter{
         const usize minFind = (strLen > _sensitivity) ? (strLen - _sensitivity) : 0;
         const usize maxFind = (strLen + _sensitivity);
 
-        // Bryce Hart  last changed: 6/24/2026 by: Claude
-        // Build the candidate pool. (Fixed: the original loop body was empty, so
-        // the pool was always empty and fix() returned the input unchanged. The
-        // dictionary is bucketed by word length, so pull every bucket whose length
-        // falls inside the window instead of scanning the whole dictionary.)
+        //Build the candidate pool.
         std::vector<std::string_view> pool;
         for(usize len = minFind; len <= maxFind; len++){
             const auto bucket = _dictionary.find(len);
@@ -183,6 +198,7 @@ class autoCorrectFilter{
                 pool.insert(pool.end(), bucket->second.begin(), bucket->second.end());
             }
         }
+
         std::string bestMatch{str};
         usize bestMatchDistance = SIZE_MAX; //if its the og word it'll get discarded anyway
         // Pick the lowest-cost candidate. On an exact cost tie, prefer the longer
@@ -208,6 +224,6 @@ class autoCorrectFilter{
 
 
 
-}//spell
+} //form
 
 } //bstd
