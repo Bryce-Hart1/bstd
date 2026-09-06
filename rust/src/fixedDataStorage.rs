@@ -27,10 +27,30 @@ use crate::simpleHash;
 /// writers never block each other. Reads take `&self` and touch no lock at all
 /// beyond the in-memory index.
 ///
-/// **One process at a time.** Two processes opening the same vault both derive
-/// their next row from the file length and will silently overwrite each other.
-/// There is no file locking here — `flock` needs libc and this crate is std-only.
-/// may add this feature in V4.
+/// **One writer process at a time — now enforced.** Two processes opening the
+/// same vault both derive their next row from the file length and would silently
+/// overwrite each other.
+///
+/// 08/20/2026 — a writer now takes a `<vault>.lock` sidecar for the lifetime of
+/// the handle (see [`vault_lock`]); a second writer is refused instead of
+/// corrupting the file. Read-only handles take no lock, because concurrent
+/// readers were never the problem. Opt out with
+/// [`fixedVaultSettings::file_lock`].
+///
+/// This is a lock file rather than `flock(2)` because `flock` needs libc and this
+/// crate is std-only. The tradeoff is that a crashed process leaves its lock
+/// behind: the kernel would have released an `flock`, but nothing releases a file.
+/// Recovering needs a liveness check on the recorded pid, which also needs libc,
+/// so the error names the pid and the file to delete instead of guessing.
+///
+/// # Format generations
+/// 08/20/2026 — the header carries a caller-declared `format_id` (see
+/// [`fixedVaultSettings::format_id`]), which is the *application's* notion of
+/// which generation of its schema a file belongs to. It is deliberately separate
+/// from `VAULT_VERSION`, which is this engine's own on-disk version: an app that
+/// rebuilds its records into a new shape can reject its own older files without
+/// invalidating every other bstd vault in existence. Files written before this
+/// existed read back as `format_id = 0`, which is the default, so nothing breaks.
 
 
 
@@ -125,6 +145,9 @@ pub struct fixedVaultSettings {
     read_only: bool,
     rebuild_index_on_open: bool,
     row_checksum: bool,
+    // 08/20/2026
+    format_id: u32,
+    file_lock: bool,
 }
 
 impl fixedVaultSettings {
@@ -136,6 +159,10 @@ impl fixedVaultSettings {
             read_only: false,
             rebuild_index_on_open: true,
             row_checksum: true,
+            // 08/20/2026 — 0 is what every file written before format ids existed
+            // carries, so the default opens them unchanged.
+            format_id: 0,
+            file_lock: true,
         }
     }
 
@@ -178,6 +205,35 @@ impl fixedVaultSettings {
     /// [`fixed_data_vault::has_row_checksum`] what you actually got.
     pub fn row_checksum(&mut self, yes: bool) -> &mut Self {
         self.row_checksum = yes;
+        self
+    }
+
+    /// 08/20/2026
+    /// The caller's format generation for this file, stamped into the header on
+    /// create and checked on open. A file declaring a different id is refused.
+    ///
+    /// This is for an application that rebuilds its records into an incompatible
+    /// shape and needs its own older files rejected rather than misread. Use it
+    /// instead of reaching for `VAULT_VERSION`: that byte is the storage engine's
+    /// version, and bumping it would invalidate every bstd vault everywhere, not
+    /// just the one whose records changed.
+    ///
+    /// It is not folded into the schema fingerprint — like the checksum flag, it
+    /// describes the file rather than the layout — so leaving it at the default
+    /// `0` reproduces the pre-08/20/2026 behaviour byte for byte.
+    pub fn format_id(&mut self, id: u32) -> &mut Self {
+        self.format_id = id;
+        self
+    }
+
+    /// 08/20/2026
+    /// Whether a writer takes the `<vault>.lock` sidecar. Default `true`.
+    ///
+    /// `false` restores the pre-08/20/2026 behaviour, which is safe only when
+    /// something outside this process guarantees a single writer. Read-only
+    /// handles never take the lock regardless.
+    pub fn file_lock(&mut self, yes: bool) -> &mut Self {
+        self.file_lock = yes;
         self
     }
 }
@@ -300,6 +356,8 @@ fn bad(msg: String) -> io::Error {
 struct vault_layout {
     fields: Vec<fixed_field>,
     flags: u8,
+    // 08/20/2026 — the caller's format generation; see fixedVaultSettings::format_id.
+    format_id: u32,
     schema_fp: u32,
     header_len: u64,
     payload_bits: usize,
@@ -309,7 +367,7 @@ struct vault_layout {
 }
 
 impl vault_layout {
-    fn build(fields: Vec<fixed_field>, checksum: bool) -> io::Result<Self> {
+    fn build(fields: Vec<fixed_field>, checksum: bool, format_id: u32) -> io::Result<Self> {
         if fields.is_empty() {
             return Err(bad("vault layout has no fields".to_string()));
         }
@@ -379,6 +437,7 @@ impl vault_layout {
             schema_fp: fingerprint(&fields, flags),
             fields,
             flags,
+            format_id,
             header_len: header_len as u64,
             payload_bits,
             payload_bytes,
@@ -416,7 +475,10 @@ impl vault_layout {
         out[12..14].copy_from_slice(&(self.fields.len() as u16).to_le_bytes());
         out[14..16].copy_from_slice(&(self.row_bytes as u16).to_le_bytes());
         out[16..20].copy_from_slice(&(self.payload_bits as u32).to_le_bytes());
-        // out[20..24] stays zero: reserved
+        // 08/20/2026 — was a reserved word required to be zero. It now carries the
+        // caller's format_id, and 0 is exactly what every file written before this
+        // change holds, so old files stay readable under the default setting.
+        out[20..24].copy_from_slice(&self.format_id.to_le_bytes());
 
         let mut at = HEADER_PREFIX_LEN;
         for f in &self.fields {
@@ -478,12 +540,8 @@ impl vault_layout {
         let stored_row_bytes = u16::from_le_bytes([bytes[14], bytes[15]]) as usize;
         let stored_payload_bits =
             u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as usize;
-        let reserved = u32::from_le_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
-        if reserved != 0 {
-            return Err(bad(format!(
-                "vault header reserved word is {reserved}, expected 0"
-            )));
-        }
+        // 08/20/2026 — formerly a reserved word rejected unless zero.
+        let format_id = u32::from_le_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
         if field_count == 0 {
             return Err(bad("vault header declares zero fields".to_string()));
         }
@@ -513,7 +571,7 @@ impl vault_layout {
 
         // Rebuilding from the descriptors re-runs every validity check, and
         // then we confirm the recomputed geometry matches what was written.
-        let layout = Self::build(fields, flags & FLAG_ROW_CHECKSUM != 0)?;
+        let layout = Self::build(fields, flags & FLAG_ROW_CHECKSUM != 0, format_id)?;
         if layout.header_len as usize != header_len {
             return Err(bad(format!(
                 "vault header length {header_len} disagrees with its field table ({})",
@@ -712,6 +770,9 @@ pub struct fixed_data_vault {
     settings: fixedVaultSettings,
     next_row: AtomicU64,
     index: RwLock<HashMap<u32, fixed_data_slot>>,
+    // 08/20/2026 — held for the life of a writable handle; dropping it removes the
+    // sidecar. None for a read-only handle, or when file_lock is off.
+    _lock: Option<vault_lock>,
     #[cfg(windows)]
     win_io: std::sync::Mutex<()>,
 }
@@ -731,7 +792,7 @@ impl fixed_data_vault {
     ) -> io::Result<Self> {
         let path = PathBuf::from(path.as_ref());
         let settings_checksum = settings.row_checksum;
-        let wanted = vault_layout::build(expect.data, settings_checksum)?;
+        let wanted = vault_layout::build(expect.data, settings_checksum, settings.format_id)?;
 
         let exists = path.try_exists()?;
         if !exists && !settings.create_if_missing {
@@ -746,6 +807,16 @@ impl fixed_data_vault {
                 format!("vault {} does not exist and settings are read-only", path.display()),
             ));
         }
+
+        // 08/20/2026 — taken BEFORE the file is opened, so a refused second writer
+        // never creates the vault it was not allowed to touch. Held in a local until
+        // the vault owns it: every `?` between here and construction drops it, which
+        // is what stops a failed open from leaving a lock behind.
+        let lock = if settings.read_only || !settings.file_lock {
+            None
+        } else {
+            Some(vault_lock::acquire(&path)?)
+        };
 
         let file = open_vault_file(&path, settings.read_only, settings.create_if_missing)?;
 
@@ -767,6 +838,18 @@ impl fixed_data_vault {
             vault_layout::decode_header(&head)?
         };
 
+        // 08/20/2026 — checked before the field-by-field schema compare, so a file
+        // from another format generation says so instead of reporting whichever
+        // field happens to differ first, which explains nothing.
+        if layout.format_id != settings.format_id {
+            return Err(bad(format!(
+                "vault {} is format {} but this build expects format {}",
+                path.display(),
+                layout.format_id,
+                settings.format_id
+            )));
+        }
+
         let mut vault = fixed_data_vault {
             next_row: AtomicU64::new(0),
             path,
@@ -774,6 +857,7 @@ impl fixed_data_vault {
             layout,
             settings,
             index: RwLock::new(HashMap::new()),
+            _lock: lock,
             #[cfg(windows)]
             win_io: std::sync::Mutex::new(()),
         };
@@ -781,7 +865,8 @@ impl fixed_data_vault {
 
         // Rebuilt rather than kept alive: the fresh-file branch above consumed
         // `wanted` by stamping it onto disk.
-        let requested = vault_layout::build(wanted_fields.clone(), settings_checksum)?;
+        let requested =
+            vault_layout::build(wanted_fields.clone(), settings_checksum, vault.layout.format_id)?;
         if let Err(mismatch) = vault.layout.check_compatible(&requested) {
             match vault.settings.on_schema_mismatch {
                 schema_policy::error => return Err(mismatch),
@@ -815,6 +900,11 @@ impl fixed_data_vault {
             ));
         }
         let path = PathBuf::from(path.as_ref());
+        // 08/20/2026 — this truncation happens before `open` takes the write lock, so
+        // two processes racing to CREATE the same path can both blank it. That is
+        // acceptable: create means "I am declaring this file's contents", the window
+        // ends the moment either one locks, and neither can then append over the other.
+        // A caller who cannot tolerate even that should `open` an existing vault.
         OpenOptions::new().write(true).create(true).truncate(true).open(&path)?;
         Self::open(path, expect, settings)
     }
@@ -841,6 +931,10 @@ impl fixed_data_vault {
     }
     pub fn has_row_checksum(&self) -> bool {
         self.layout.has_checksum()
+    }
+    /// 08/20/2026 — the format generation stamped in this file's header.
+    pub fn format_id(&self) -> u32 {
+        self.layout.format_id
     }
     pub fn path(&self) -> &Path {
         &self.path
@@ -1192,7 +1286,13 @@ impl fixed_data_vault {
             ));
         }
 
-        let target = vault_layout::build(new_layout.data, self.layout.has_checksum())?;
+        // The format generation is a property of the file, not of the layout change,
+        // so it rides through a migration untouched.
+        let target = vault_layout::build(
+            new_layout.data,
+            self.layout.has_checksum(),
+            self.layout.format_id,
+        )?;
         if self.layout.check_compatible(&target).is_ok() {
             return Ok(()); // already there
         }
@@ -1413,6 +1513,78 @@ impl<'a> Iterator for fixed_row_iter<'a> {
         }
         None
     }
+}
+
+/// 08/20/2026
+/// Single-writer lock for a vault: a `<vault path>.lock` sidecar, created with
+/// `create_new` and removed on drop.
+///
+/// `create_new` is the whole mechanism — it is an atomic "create it or tell me it already
+/// exists", so two processes racing to open the same vault cannot both win. That race is
+/// the one this fixes: both would derive their next row from the file length, hand out the
+/// same row index, and overwrite each other's records with no error from either side.
+///
+/// **Advisory, and only against other bstd vaults.** Nothing stops an unrelated program
+/// from writing the file. It is the accidental second backend this is aimed at.
+///
+/// # Stale locks
+/// A process that dies leaves its lock file behind — `flock(2)` would have been released by
+/// the kernel, but a file is not. Deciding whether the recorded pid is still alive needs
+/// `kill(pid, 0)`, which needs libc, and this crate is std-only. So the error names the pid
+/// and the exact file to delete rather than guessing and clearing a lock some live process
+/// is depending on.
+struct vault_lock {
+    path: PathBuf,
+}
+
+impl vault_lock {
+    fn acquire(vault: &Path) -> io::Result<Self> {
+        let path = lock_path(vault);
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut handle) => {
+                // Best effort: the pid is diagnostic, and a lock that exists but reads
+                // back empty is still a held lock.
+                use std::io::Write;
+                let _ = write!(handle, "{}", std::process::id());
+                let _ = handle.sync_all();
+                Ok(vault_lock { path })
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                let recorded = fs::read_to_string(&path).unwrap_or_default();
+                let recorded = recorded.trim();
+                let holder = if recorded.is_empty() {
+                    "another process".to_string()
+                } else {
+                    format!("pid {recorded}")
+                };
+                Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "vault {} is already open for writing by {holder}; \
+                         if that process is not running, delete {}",
+                        vault.display(),
+                        path.display()
+                    ),
+                ))
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+impl Drop for vault_lock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// `foods_vault.bin` -> `foods_vault.bin.lock`. Appends rather than using
+/// `with_extension`, which would turn it into `foods_vault.lock` and collide with a
+/// sibling vault named `foods_vault.<anything else>`.
+fn lock_path(vault: &Path) -> PathBuf {
+    let mut name = vault.as_os_str().to_os_string();
+    name.push(".lock");
+    PathBuf::from(name)
 }
 
 /// The one place a vault's file handle is configured.
@@ -2294,4 +2466,226 @@ mod tests {
         v.rebuild_index().unwrap();
         assert_eq!(v.latest_u64("a").unwrap(), Some(8));
     }
+
+    // -- format id ---------------------------------------------------------
+    // 08/20/2026
+
+    #[test]
+    fn format_id_round_trips_and_defaults_to_zero() {
+        let t = temp_vault::new("formatid");
+        {
+            let v = fixed_data_vault::create(t.path(), ab_layout(), fast()).unwrap();
+            assert_eq!(v.format_id(), 0, "default is 0, which is what old files hold");
+        }
+
+        let t2 = temp_vault::new("formatid4");
+        let mut s = fast();
+        s.format_id(4);
+        {
+            let v = fixed_data_vault::create(t2.path(), ab_layout(), s.clone()).unwrap();
+            assert_eq!(v.format_id(), 4);
+        }
+        let v = fixed_data_vault::open(t2.path(), ab_layout(), s).unwrap();
+        assert_eq!(v.format_id(), 4, "stamped in the header, not in the settings");
+    }
+
+    // The point of the feature: a file from an earlier generation of the caller's schema
+    // is refused by name, rather than being reinterpreted or reported as some unrelated
+    // field mismatch.
+    #[test]
+    fn rejects_a_different_format_id() {
+        let t = temp_vault::new("formatmismatch");
+        let mut wrote = fast();
+        wrote.format_id(3);
+        drop(fixed_data_vault::create(t.path(), ab_layout(), wrote).unwrap());
+
+        let mut reads = fast();
+        reads.format_id(4);
+        let err = fixed_data_vault::open(t.path(), ab_layout(), reads).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let msg = err.to_string();
+        assert!(msg.contains("is format 3"), "got: {msg}");
+        assert!(msg.contains("expects format 4"), "got: {msg}");
+
+        // And the default must not silently accept it either.
+        let err = fixed_data_vault::open(t.path(), ab_layout(), fast()).unwrap_err();
+        assert!(err.to_string().contains("is format 3"), "got: {err}");
+    }
+
+    // A vault written before format ids existed has zeros in that header word, which is
+    // exactly the default -- so it keeps opening, and its fingerprint is unchanged.
+    #[test]
+    fn legacy_zero_format_id_opens_under_the_default() {
+        let t = temp_vault::new("legacyformat");
+        let fp = {
+            let v = fixed_data_vault::create(t.path(), ab_layout(), fast()).unwrap();
+            v.append(&[fixed_data::present("a", num(12, 8)), fixed_data::absent("b")])
+                .unwrap();
+            v.flush().unwrap();
+            v.schema_fingerprint()
+        };
+
+        // Byte 20..24 of the header really is zero on disk.
+        let head = fs::read(t.path()).unwrap();
+        assert_eq!(&head[20..24], &[0, 0, 0, 0]);
+
+        let v = fixed_data_vault::open(t.path(), ab_layout(), fast()).unwrap();
+        assert_eq!(v.format_id(), 0);
+        assert_eq!(v.schema_fingerprint(), fp, "format_id is not folded into the fingerprint");
+        assert_eq!(v.latest_u64("a").unwrap(), Some(12));
+    }
+
+    #[test]
+    fn migration_preserves_the_format_id() {
+        let t = temp_vault::new("formatmigrate");
+        let mut s = fast();
+        s.format_id(4);
+        {
+            let v = fixed_data_vault::create(t.path(), ab_layout(), s.clone()).unwrap();
+            v.append(&[fixed_data::present("a", num(3, 8)), fixed_data::absent("b")])
+                .unwrap();
+        }
+
+        let mut extended = fixed_data_init_list::new();
+        extended.add("a", false, 8).add("b", false, 8).add("c", false, 16);
+
+        let mut v = fixed_data_vault::open(t.path(), ab_layout(), s.clone()).unwrap();
+        v.migrate(extended).unwrap();
+        assert_eq!(v.format_id(), 4, "a layout change is not a format change");
+        assert_eq!(v.latest_u64("a").unwrap(), Some(3));
+        drop(v);
+
+        // And it survives to the next open, from the header of the migrated file.
+        let mut extended = fixed_data_init_list::new();
+        extended.add("a", false, 8).add("b", false, 8).add("c", false, 16);
+        let v = fixed_data_vault::open(t.path(), extended, s).unwrap();
+        assert_eq!(v.format_id(), 4);
+    }
+
+    // -- file lock ---------------------------------------------------------
+    // 08/20/2026
+
+    // The corruption this exists to prevent: two writers both deriving next_row from the
+    // file length, handing out the same index, and overwriting each other silently.
+    #[test]
+    fn second_writer_is_refused_while_the_first_holds_the_lock() {
+        let t = temp_vault::new("lock");
+        let first = fixed_data_vault::create(t.path(), ab_layout(), fast()).unwrap();
+        let lock = lock_path(t.path());
+        assert!(lock.try_exists().unwrap(), "the lock file is taken while open");
+        assert_eq!(
+            fs::read_to_string(&lock).unwrap().trim(),
+            std::process::id().to_string(),
+            "the lock records the holding pid"
+        );
+
+        let err = fixed_data_vault::open(t.path(), ab_layout(), fast()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        let msg = err.to_string();
+        assert!(msg.contains("already open for writing"), "got: {msg}");
+        assert!(msg.contains(&std::process::id().to_string()), "names the pid: {msg}");
+        assert!(msg.contains(".lock"), "names the file to delete: {msg}");
+
+        drop(first);
+        assert!(!lock.try_exists().unwrap(), "dropping the vault releases the lock");
+
+        // And the path is usable again.
+        let second = fixed_data_vault::open(t.path(), ab_layout(), fast()).unwrap();
+        assert_eq!(second.row_count().unwrap(), 0);
+        drop(second);
+        assert!(!lock.try_exists().unwrap());
+    }
+
+    // A failed open must not leave a lock behind, or one bad schema would wedge the file
+    // until someone deleted a sidecar by hand.
+    #[test]
+    fn a_failed_open_releases_the_lock() {
+        let t = temp_vault::new("lockfail");
+        drop(fixed_data_vault::create(t.path(), ab_layout(), fast()).unwrap());
+
+        let mut widened = fixed_data_init_list::new();
+        widened.add("a", false, 16).add("b", false, 8);
+        fixed_data_vault::open(t.path(), widened, fast()).unwrap_err();
+
+        assert!(!lock_path(t.path()).try_exists().unwrap(), "lock leaked on the error path");
+        fixed_data_vault::open(t.path(), ab_layout(), fast()).expect("still openable");
+    }
+
+    // Readers were never the problem -- two of them cannot hand out the same row index --
+    // so a read-only handle takes no lock and does not block the writer.
+    #[test]
+    fn read_only_handles_take_no_lock() {
+        let t = temp_vault::new("lockreadonly");
+        {
+            let v = fixed_data_vault::create(t.path(), ab_layout(), fast()).unwrap();
+            v.append(&[fixed_data::present("a", num(9, 8)), fixed_data::absent("b")])
+                .unwrap();
+            v.flush().unwrap();
+        }
+
+        let mut ro = fast();
+        ro.read_only(true);
+        let reader = fixed_data_vault::open(t.path(), ab_layout(), ro.clone()).unwrap();
+        assert!(!lock_path(t.path()).try_exists().unwrap(), "a reader takes no lock");
+
+        // A writer can still open alongside it, and a second reader alongside both.
+        let writer = fixed_data_vault::open(t.path(), ab_layout(), fast()).unwrap();
+        let reader2 = fixed_data_vault::open(t.path(), ab_layout(), ro).unwrap();
+        assert_eq!(reader.latest_u64("a").unwrap(), Some(9));
+        assert_eq!(reader2.latest_u64("a").unwrap(), Some(9));
+        drop(writer);
+        drop(reader);
+        drop(reader2);
+    }
+
+    #[test]
+    fn file_lock_can_be_turned_off() {
+        let t = temp_vault::new("lockoff");
+        let mut s = fast();
+        s.file_lock(false);
+        let first = fixed_data_vault::create(t.path(), ab_layout(), s.clone()).unwrap();
+        assert!(!lock_path(t.path()).try_exists().unwrap());
+        // Explicitly opting out restores the old, unguarded behaviour.
+        let second = fixed_data_vault::open(t.path(), ab_layout(), s).unwrap();
+        drop(first);
+        drop(second);
+    }
+
+    // migrate renames a new file over the vault path. The lock is a sidecar on that path,
+    // so it is untouched by the rename and still held afterwards.
+    #[test]
+    fn the_lock_survives_a_migration() {
+        let t = temp_vault::new("lockmigrate");
+        let mut v = fixed_data_vault::create(t.path(), ab_layout(), fast()).unwrap();
+        v.append(&[fixed_data::present("a", num(1, 8)), fixed_data::absent("b")])
+            .unwrap();
+
+        let mut extended = fixed_data_init_list::new();
+        extended.add("a", false, 8).add("b", false, 8).add("c", false, 16);
+        v.migrate(extended).unwrap();
+
+        assert!(lock_path(t.path()).try_exists().unwrap(), "still locked after migrating");
+        let err = fixed_data_vault::open(t.path(), ab_layout(), fast()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+
+        drop(v);
+        assert!(!lock_path(t.path()).try_exists().unwrap());
+    }
+
+    // A leftover lock from a crashed process is NOT cleared automatically: deciding the
+    // pid is dead needs libc. The contract is that it stays until someone removes it.
+    #[test]
+    fn a_stale_lock_blocks_until_it_is_removed() {
+        let t = temp_vault::new("lockstale");
+        drop(fixed_data_vault::create(t.path(), ab_layout(), fast()).unwrap());
+
+        let lock = lock_path(t.path());
+        fs::write(&lock, "999999").unwrap(); // as if a dead process had left it
+        let err = fixed_data_vault::open(t.path(), ab_layout(), fast()).unwrap_err();
+        assert!(err.to_string().contains("999999"), "got: {err}");
+
+        fs::remove_file(&lock).unwrap();
+        fixed_data_vault::open(t.path(), ab_layout(), fast()).expect("openable once cleared");
+    }
+
 }

@@ -1,11 +1,11 @@
+#include <iostream>
 #include <vector>
 #include <mutex>
 #include <memory>
 #include <shared_mutex>
 #include <atomic>
-#include <variant>
-#include <exception>
-#include <iostream>
+#include <concepts>
+
 
 
 namespace bstd{
@@ -67,7 +67,7 @@ struct spinLock{
             numType _value;
             std::unique_ptr<numType> left = nullptr;
             std::unique_ptr<numType> right = nullptr;
-            sizeT count = 0;
+            sizeT _count = 0;
             node(numType value){
                 this->_count = 0;
                 this->_value = value;
@@ -82,20 +82,20 @@ struct spinLock{
             if(ptr == nullptr){
                 return false;
             }
-            if(ptr.value){
+            if(ptr->_value){
                 return true;
             }
-            if(ptr.left != nullptr){
-                findHelper(ptr.left, target);
+            if(ptr->left != nullptr){
+                findHelper(ptr->_left, target);
             }
-            if(ptr.right != nullptr){
-                findHelper(ptr.right, target);
+            if(ptr->_right != nullptr){
+                findHelper(ptr->_right, target);
             }
 
         }
 
         bool hasChildren(node* ptr){
-            if(ptr.left != nullptr || ptr.right != nullptr){
+            if(ptr->_left != nullptr || ptr->_right != nullptr){
                 return true;
             }
             return false;
@@ -105,13 +105,13 @@ struct spinLock{
             if(ptr == nullptr){
                 return nullptr;
             }
-            if(ptr.value){
+            if(ptr->_value){
                 return ptr;
             }
-            if(ptr.left != nullptr){
-                returnHelper(ptr.left, target);
+            if(ptr->_left != nullptr){
+                returnHelper(ptr->_left, target);
             }else{
-                returnHelper(ptr.right, target);
+                returnHelper(ptr->_right, target);
             }
             return nullptr;
         }
@@ -125,15 +125,20 @@ struct spinLock{
         }
 
         public:
-            biTree(Type rootValue){
+
+            template <typename Type>
+            requires std::integral<Type> 
+            binTree(Type rootValue){
                 std::unique_lock<std::mutex> lock(root.nodeLock);
                 root.value = rootValue;
                 root.count++;
             }
-            ~biTree(){
-                delete[] this.root;
+            ~binTree(){
+                delete[] this->root;
             }
 
+            template <typename Type>
+            requires std::integral<Type>
             void add(Type value){
                 auto current = this->root;
                 root++;
@@ -148,17 +153,17 @@ struct spinLock{
                     if(this->isEmpty()){
                         std::runtime_error("Binary Tree is empty");
                     }
-                std::vector<numType> list = traverse_with_vector(list, this.root);
+                std::vector<numType> list = traverse_with_vector(list, this->root);
                 delete[] root;
                 }catch(const std::exception &e){
-                    std::cerr << e << '\n';
+                    std::cerr << e.what() << '\n';
                 }
-                if(this.size == 1){
+                if(this->size == 1){
                     return;
                 }
 
-                const sizeT middleIndex = (this.size / 2);
-                node newRoot();
+                const sizeT middleIndex = (this->size / 2);
+                node newRoot{};
 
             }
 
@@ -183,12 +188,12 @@ struct spinLock{
             }
 
             void remove(numType remove){
-                node* current = returnHelper(this.root, remove);
+                node* current = returnHelper(this->root, remove);
                 if(current != nullptr){
                     if(!hasChildren(current)){ //first case is a leaf
                         delete current;
                     }
-                    if(current == this.root){ //is the root
+                    if(current == this->root){ //is the root
                         //add this
                     }
 

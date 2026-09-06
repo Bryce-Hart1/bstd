@@ -5,7 +5,10 @@
 #include <ctime>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <version>
+#include <variant>
+
 
 //might not need based on version:
 #include <ratio>
@@ -38,7 +41,7 @@ enum class time{
 * Calendar readers use the local zone when the platform ships a tzdb; they fall
 * back to UTC if the zone lookup fails rather than throwing.
 */
-class clock{
+class timeKeeper{
     using u8 = u_int8_t; //only for use inside implementation
     using highResClock = std::chrono::time_point<std::chrono::high_resolution_clock>;
 
@@ -155,7 +158,7 @@ class clock{
 
 
     public:
-    clock() : _startTime(std::chrono::high_resolution_clock::now()), _endTime(_startTime), _running(false) {}
+    timeKeeper() : _startTime(std::chrono::high_resolution_clock::now()), _endTime(_startTime), _running(false) {}
 
     void start(){
         _startTime = std::chrono::high_resolution_clock::now();
@@ -301,5 +304,14 @@ class clock{
     }
 
 };
+
+using timeType = std::optional<std::variant<std::chrono::hours, std::chrono::minutes, std::chrono::seconds, 
+        std::chrono::milliseconds, std::chrono::nanoseconds>>;
+/**
+* DO NOT USE, UNFINISHED
+*/
+constexpr timeType convertTimeToNextUnit(const bool convertToSmallerUnit, const bool _time){
+    return std::nullopt;
+}
 }
 }//bstd

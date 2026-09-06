@@ -14,7 +14,7 @@ namespace ds{
 namespace ts{
 
 class Trie{
-using sizeT = std::size_t;
+using size = std::size_t;
 using string = std::string;
 using optFlag = std::optional<bool>;
 
@@ -22,7 +22,7 @@ using optFlag = std::optional<bool>;
      * @author Bryce Hart @date Aug 15 2026
      * @version 2.0
      * @brief A thread safe trie. The node type is private and never escapes the class. 
-     * 2.0 provides a much smaller node size (40 now instead of 104º
+     * 2.0 provides a much smaller node size (40 now instead of 104)
      * 
      *
      * CONCURRENCY MODEL: one reader/writer lock over the whole structure
@@ -83,7 +83,7 @@ using optFlag = std::optional<bool>;
         struct node {
             char value;
             bool isEndpoint;
-            sizeT count;
+            size count;
             std::vector<std::unique_ptr<node>> childrenNodes;
 
             explicit node(char val) : value(val), isEndpoint(false), count(0){}
@@ -91,8 +91,8 @@ using optFlag = std::optional<bool>;
 
         mutable std::shared_mutex v_mtx; // mutable so const readers can still lock
         std::unique_ptr<node> v_root;
-        sizeT v_nodeCount;  // live nodes, excluding the root sentinel
-        sizeT wordCount;  // total insertions, counting duplicates
+        size v_nodeCount;  // live nodes, excluding the root sentinel
+        size wordCount;  // total insertions, counting duplicates
 
         // Every function below assumes v_mtx is already held by the caller.
         // Because of that they are also free to be plain non-atomic reads/writes.
@@ -152,10 +152,10 @@ using optFlag = std::optional<bool>;
 
         /// @return number of nodes in the subtree rooted at n, including n itself.
         /// Used to keep v_nodeCount honest when a subtree is about to be erased.
-        static sizeT countSubtree_unlocked(const node* n){
+        static size countSubtree_unlocked(const node* n){
             if(n == nullptr) return 0;
 
-            sizeT total = 1;
+            size total = 1;
             for(const auto& child : n->childrenNodes){
                 total += countSubtree_unlocked(child.get());
             }
@@ -169,7 +169,7 @@ using optFlag = std::optional<bool>;
          * @return true if current is now dead (not an endpoint, no children) and
          *         should therefore be erased by its parent.
          */
-        bool removeHelper_unlocked(node* current, const string& word, sizeT depth, bool removeAll){
+        bool removeHelper_unlocked(node* current, const string& word, std::size_t depth, bool removeAll){
             if(depth == word.size()){  // base case: this is the word's terminal node
                 if(!current->isEndpoint) return false;   // word isn't actually here
 
@@ -242,7 +242,7 @@ using optFlag = std::optional<bool>;
                 return false;
             }
 
-            const sizeT removed = removeAll ? target->count : 1;
+            const size removed = removeAll ? target->count : 1;
             removeHelper_unlocked(v_root.get(), toRemove, 0, removeAll);
             wordCount -= removed;
             return true;
@@ -260,10 +260,10 @@ using optFlag = std::optional<bool>;
         // Non-copyable (unique_ptr children) and non-movable (a shared_mutex can
         // be neither copied nor moved). Spelled out so the compiler error is
         // obvious rather than a wall of template noise.
-        Trie(const Trie&)            = delete;
+        Trie(const Trie&) = delete;
         Trie& operator=(const Trie&) = delete;
-        Trie(Trie&&)                 = delete;
-        Trie& operator=(Trie&&)      = delete;
+        Trie(Trie&&) = delete;
+        Trie& operator=(Trie&&) = delete;
 
         /// Drop every word. Erasing the root's children cascades through the tree.
         void clear(){
@@ -288,7 +288,7 @@ using optFlag = std::optional<bool>;
         }
 
         /// @return how many times word is currently held (0 if absent).
-        sizeT countOf(const string& word) const {
+        size countOf(const string& word) const {
             std::shared_lock lock(v_mtx);
             const node* target = findNode_unlocked(word);
             return (target != nullptr && target->isEndpoint) ? target->count : 0;
@@ -297,7 +297,7 @@ using optFlag = std::optional<bool>;
         /// @return number of direct children of the node at the end of prefix.
         /// An empty prefix asks about the root, i.e. how many distinct first
         /// characters the trie holds. 0 if the prefix isn't in the tree.
-        sizeT getChildCount(const string& prefix) const {
+        size getChildCount(const string& prefix) const {
             std::shared_lock lock(v_mtx);
 
             const node* target = prefix.empty() ? v_root.get() : findNode_unlocked(prefix);
@@ -305,13 +305,13 @@ using optFlag = std::optional<bool>;
         }
 
         /// Total insertions, duplicates included.
-        sizeT getWordCount() const {
+        size getWordCount() const {
             std::shared_lock lock(v_mtx);
             return wordCount;
         }
 
         /// Live nodes, excluding the root sentinel.
-        sizeT getNodeCount() const {
+        size getNodeCount() const {
             std::shared_lock lock(v_mtx);
             return v_nodeCount;
         }

@@ -4,7 +4,7 @@
 
 namespace bstd{
 
-namespace hardware{
+namespace syst{
 
 class PeriodicTask {
 public:

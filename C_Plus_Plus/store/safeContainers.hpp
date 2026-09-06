@@ -4,7 +4,6 @@
 #include <concepts>
 #include <cstddef>
 #include <cstring>
-#include <limits>
 #include <string>
 #include <cstdint>
 #include <optional>
@@ -12,7 +11,6 @@
 #include <type_traits>
 #include <variant>
 #include <vector>
-#include "writeBin.hpp"
 
 namespace bstd{
 namespace store {
@@ -30,20 +28,22 @@ namespace store {
 * @attention These values land on disk. Never renumber them, and only ever append.
 * The order matches the alternative order of binType::supportedTypes, so
 * static_cast<Tag>(variant.index()) is always the same as the stored tag.
+* @attention Renumbered once, when std::string was dropped so that every payload
+* is fixed width. Anything written with the older numbering (where STRING was 0
+* and every other tag sat one higher) will not read back correctly.
 */
 enum class Tag : std::uint8_t {
-    STRING = 0,
-    CHAR   = 1,
-    U8     = 2,
-    U16    = 3,
-    U32    = 4,
-    U64    = 5,
-    I8     = 6,
-    I16    = 7,
-    I32    = 8,
-    I64    = 9,
-    FLOAT  = 10,
-    DOUBLE = 11,
+    CHAR   = 0,
+    U8     = 1,
+    U16    = 2,
+    U32    = 3,
+    U64    = 4,
+    I8     = 5,
+    I16    = 6,
+    I32    = 7,
+    I64    = 8,
+    FLOAT  = 9,
+    DOUBLE = 10,
 };
 
 
@@ -60,7 +60,6 @@ namespace _details {
     using i64 = std::int64_t;
 
     template<typename T> struct TypeTag;  //leave this one undefined to catch types we dont want
-    template<> struct TypeTag<std::string> {static constexpr Tag value = Tag::STRING;};
     template<> struct TypeTag<char> {static constexpr Tag value = Tag::CHAR;};
     template<> struct TypeTag<u8> {static constexpr Tag value = Tag::U8;};
     template<> struct TypeTag<u16> {static constexpr Tag value = Tag::U16;}; //same as unsigned short
@@ -81,7 +80,6 @@ namespace _details {
     * actually store. `long` is 64 bit on both Mac and Linux but is a *distinct type*
     * from `long long`, and which of the two int64_t names differs between them --
     * normalizing here is what keeps a file written on one readable on the other.
-    * String literals are folded to std::string so binType("hi") just works.
     */
     template<typename T>
     struct normalize {
@@ -89,10 +87,9 @@ namespace _details {
         using D = std::decay_t<T>;
         public:
         using type =
-            std::conditional_t<std::is_same_v<D, char*> || std::is_same_v<D, const char*>, std::string,
             std::conditional_t<std::is_same_v<D, long> || std::is_same_v<D, long long>, i64,
             std::conditional_t<std::is_same_v<D, unsigned long> || std::is_same_v<D, unsigned long long>, u64,
-            D>>>;
+            D>>;
     };
     template<typename T> using normalize_t = typename normalize<T>::type;
 
@@ -103,7 +100,6 @@ namespace _details {
 
     inline const char* tagName(Tag t) noexcept {
         switch(t){
-            case Tag::STRING: return "string";
             case Tag::CHAR:   return "char";
             case Tag::U8:     return "u8";
             case Tag::U16:    return "u16";
@@ -127,8 +123,12 @@ namespace _details {
 * converts most types into its binary representation, safely.
 * can also be converted to other types safely 
 * @param Type - pass in type to be converted to binary
+* @attention Fixed width types only. std::string (and so string literals) are
+* deliberately unsupported: every payload is exactly payloadWidth(tag) bytes, which
+* is what lets a flat buffer of one type be sliced without a length prefix.
 * @attention For Linux/Mac specifically because of the type discrepancies for
 * long/long long conversions (for now, may update in later versions)
+* @attention updated Sept 5th to no longer need write bin dependency.
 */
 class binType{
     public:
@@ -141,12 +141,27 @@ class binType{
     using u64 = std::uint64_t;
     using i64 = std::int64_t;
     using Tag = bstd::store::Tag;
-    using supportedTypes = std::variant<typename std::string, char, u8, u16, u32, u64,
+    using supportedTypes = std::variant<char, u8, u16, u32, u64,
     i8, i16, i32, i64, float, double>;
 
     private:
     supportedTypes data;
     Tag tag;
+
+
+
+    template<std::integral T>
+    static T to_little_end(T value){
+        if constexpr(std::endian::native == std::endian::big)
+            return byteswap(value);
+        return value;
+    }
+
+    template<std::integral T>
+    static T from_little_end(T value){
+        return to_little_end(value); // swap is its own inverse
+    }
+
 
 
     public:
@@ -158,7 +173,7 @@ class binType{
 
     /**
     * Stores @param v and records its type.
-    * @attention Unsupported types (bool, pointers, containers...) have no TypeTag,
+    * @attention Unsupported types (bool, std::string, pointers, containers...) have no TypeTag,
     * so they fail the `supported` concept and are rejected at compile time.
     */
     template<typename T>
@@ -223,8 +238,7 @@ class binType{
     std::string toString() const {
         return std::visit([](const auto& v) -> std::string {
             using V = std::remove_cvref_t<decltype(v)>;
-            if constexpr (std::is_same_v<V, std::string>) return "\"" + v + "\"";
-            else if constexpr (std::is_same_v<V, char>)   return std::string("'") + v + "'";
+            if constexpr (std::is_same_v<V, char>)        return std::string("'") + v + "'";
             else if constexpr (std::is_same_v<V, u8> || std::is_same_v<V, i8>)
                 return std::to_string(static_cast<int>(v));
             else return std::to_string(v);
@@ -238,22 +252,39 @@ class binType{
 
 
     /**
+    * @returns the payload size in bytes for @param t, not counting the tag byte.
+    * Total for every tag, since no supported type is variable width.
+    * @returns 0 for a Tag value outside the enum, which is never a valid payload size.
+    */
+    static constexpr std::size_t payloadWidth(Tag t) noexcept {
+        switch(t){
+            case Tag::CHAR:   return sizeof(char);
+            case Tag::U8:     return sizeof(u8);
+            case Tag::U16:    return sizeof(u16);
+            case Tag::U32:    return sizeof(u32);
+            case Tag::U64:    return sizeof(u64);
+            case Tag::I8:     return sizeof(i8);
+            case Tag::I16:    return sizeof(i16);
+            case Tag::I32:    return sizeof(i32);
+            case Tag::I64:    return sizeof(i64);
+            case Tag::FLOAT:  return sizeof(float);
+            case Tag::DOUBLE: return sizeof(double);
+        }
+        return 0;
+    }
+
+    /**
     * @returns the number of bytes toBytes() will produce for this value.
     */
-    std::size_t byteSize() const {
-        return 1 + std::visit([](const auto& v) -> std::size_t {
-            using V = std::remove_cvref_t<decltype(v)>;
-            if constexpr (std::is_same_v<V, std::string>) return sizeof(u32) + v.size();
-            else return sizeof(V);
-        }, data);
+    std::size_t byteSize() const noexcept {
+        return 1 + payloadWidth(tag);
     }
 
     /**
     * The on-disk form: [tag: 1 byte][payload].
-    * Integers are little-endian, floats are bit_cast to their integer form first
-    * (so NaN, infinity, denormals and -0.0 survive exactly), and strings are
-    * length-prefixed with a u32 so embedded '\0' is safe and a reader can find
-    * where the next record starts.
+    * Integers are little-endian and floats are bit_cast to their integer form first,
+    * so NaN, infinity, denormals and -0.0 survive exactly. The payload is always
+    * payloadWidth(tag) bytes, so a reader always knows where the next record starts.
     */
     std::vector<u8> toBytes() const {
         std::vector<u8> out;
@@ -289,15 +320,6 @@ class binType{
         }
         const u8 rawTag = in[offset++];
         switch(static_cast<Tag>(rawTag)){
-            case Tag::STRING: {
-                const u32 len = readLE<u32>(in, offset);
-                if(in.size() - offset < len){
-                    throw std::runtime_error("binType::fromBytes: truncated string payload");
-                }
-                std::string s(reinterpret_cast<const char*>(in.data() + offset), len);
-                offset += len;
-                return binType(s);
-            }
             case Tag::CHAR:   return binType(readLE<char>(in, offset));
             case Tag::U8:     return binType(readLE<u8>(in, offset));
             case Tag::U16:    return binType(readLE<u16>(in, offset));
@@ -328,9 +350,10 @@ class binType{
     /**
     * Builds a binType out of a *payload only* buffer, with @param tag supplying the
     * type from somewhere else (a record header, a column descriptor...). @param in
-    * carries no tag byte, so this pairs with toBytes() minus its first byte.
-    * The payload layout is otherwise identical: little-endian integers, floats in
-    * their bit_cast integer form, strings length-prefixed with a u32.
+    * carries no tag byte, so this pairs with toBytes() minus its first byte, and
+    * must be exactly payloadWidth(tag) bytes long.
+    * The payload layout is otherwise identical: little-endian integers and floats
+    * in their bit_cast integer form.
     * @returns nullopt instead of throwing on a tag outside the enum, a truncated
     * payload, or bytes left over after the value. Never reads past in.size().
     */
@@ -338,15 +361,6 @@ class binType{
         std::size_t offset = 0;
         std::optional<binType> out;
         switch(tag){
-            case Tag::STRING: {
-                const std::optional<u32> len = tryReadLE<u32>(in, offset);
-                if(!len || in.size() - offset < *len){
-                    return std::nullopt;
-                }
-                out = binType(std::string(reinterpret_cast<const char*>(in.data() + offset), *len));
-                offset += *len;
-                break;
-            }
             case Tag::CHAR:   { const auto v = tryReadLE<char>(in, offset); if(!v) return std::nullopt; out = binType(*v); break; }
             case Tag::U8:     { const auto v = tryReadLE<u8>(in, offset);   if(!v) return std::nullopt; out = binType(*v); break; }
             case Tag::U16:    { const auto v = tryReadLE<u16>(in, offset);  if(!v) return std::nullopt; out = binType(*v); break; }
@@ -373,7 +387,7 @@ class binType{
 
     template<std::integral T>
     static void appendPayload(std::vector<u8>& out, T v){
-        const T le = bstd::bit::to_little_end(v);
+        const T le = to_little_end(v);
         const u8* p = reinterpret_cast<const u8*>(&le);
         out.insert(out.end(), p, p + sizeof(T));
     }
@@ -384,14 +398,6 @@ class binType{
 
     static void appendPayload(std::vector<u8>& out, double v){
         appendPayload(out, std::bit_cast<u64>(v));
-    }
-
-    static void appendPayload(std::vector<u8>& out, const std::string& v){
-        if(v.size() > std::numeric_limits<u32>::max()){
-            throw std::runtime_error("binType: string too long to serialize");
-        }
-        appendPayload(out, static_cast<u32>(v.size()));
-        out.insert(out.end(), v.begin(), v.end());
     }
 
     /**
@@ -407,7 +413,7 @@ class binType{
         T le{};
         std::memcpy(&le, in.data() + offset, sizeof(T));
         offset += sizeof(T);
-        return bstd::bit::from_little_end(le);
+        return from_little_end(le);
     }
 
     /** Like tryReadLE, but throws on a truncated payload. */
