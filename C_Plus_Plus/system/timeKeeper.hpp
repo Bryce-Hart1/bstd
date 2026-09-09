@@ -1,25 +1,11 @@
 #pragma once
-#include <array>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <string>
-#include <string_view>
-#include <type_traits>
-#include <version>
-#include <variant>
 
 
-//might not need based on version:
-#include <ratio>
-#include <cstdint>
 
-//toolchain check:
-#if defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907L
-    #define BSTD_CLOCK_HAS_TZDB 1
-#else
-    #define BSTD_CLOCK_HAS_TZDB 0
-#endif
 
 namespace bstd{
 namespace system{
@@ -38,8 +24,8 @@ enum class time{
 * readers off the system clock. Elapsed time is measured from start() (or
 * reset()) up to stop(), or up to "now" while the clock is still running.
 *
-* Calendar readers use the local zone when the platform ships a tzdb; they fall
-* back to UTC if the zone lookup fails rather than throwing.
+* Calendar readers use the C library's local zone; they fall back to UTC if the
+* zone lookup fails rather than throwing.
 */
 class timeKeeper{
     using u8 = u_int8_t; //only for use inside implementation
@@ -65,60 +51,50 @@ class timeKeeper{
         unsigned second;
     };
 
-    /** Splits any days-based chrono time point (sys_time or local_time). */
-    template<class TimePoint>
-    static calendarParts split(TimePoint tp){
-        const auto dayPoint = std::chrono::floor<std::chrono::days>(tp);
-        const std::chrono::year_month_day ymd{dayPoint};
-        const std::chrono::hh_mm_ss hms{
-            std::chrono::floor<std::chrono::seconds>(tp - dayPoint)};
-
+    static calendarParts fromTm(const std::tm& broken){
         return calendarParts{
-            static_cast<int>(ymd.year()),
-            static_cast<unsigned>(ymd.month()),
-            static_cast<unsigned>(ymd.day()),
-            static_cast<unsigned>(hms.hours().count()),
-            static_cast<unsigned>(hms.minutes().count()),
-            static_cast<unsigned>(hms.seconds().count())};
+            broken.tm_year + 1900,
+            static_cast<unsigned>(broken.tm_mon + 1),
+            static_cast<unsigned>(broken.tm_mday),
+            static_cast<unsigned>(broken.tm_hour),
+            static_cast<unsigned>(broken.tm_min),
+            static_cast<unsigned>(broken.tm_sec)};
+    }
+
+    static std::time_t nowAsTimeT(){
+        return std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     }
 
     static calendarParts utcParts(){
-        return split(std::chrono::system_clock::now());
+        const std::time_t tt = nowAsTimeT();
+        std::tm utc{};
+
+    #if defined(_WIN32)
+        if(::gmtime_s(&utc, &tt) != 0){
+            return calendarParts{};
+        }
+    #else
+        if(::gmtime_r(&tt, &utc) == nullptr){
+            return calendarParts{};
+        }
+    #endif
+        return fromTm(utc);
     }
 
     static calendarParts localParts(){
-        const auto now = std::chrono::system_clock::now();
+        const std::time_t tt = nowAsTimeT();
+        std::tm local{};
 
-    #if BSTD_CLOCK_HAS_TZDB
-        try{
-            std::chrono::zoned_time zt{std::chrono::current_zone(), now};
-            // split the *local* time, otherwise the date flips at UTC midnight
-            return split(zt.get_local_time());
-        }catch(const std::exception&){
-            // tzdb present at compile time but unusable at run time (no zone
-            // files installed) -- UTC is the honest fallback
-            return split(now);
+    #if defined(_WIN32)
+        if(::localtime_s(&local, &tt) != 0){
+            return utcParts();
         }
     #else
-        const std::time_t tt = std::chrono::system_clock::to_time_t(now);
-        std::tm local{};
-        #if defined(_WIN32)
-        if(::localtime_s(&local, &tt) != 0){
-            return split(now);
-        }
-        #else
         if(::localtime_r(&tt, &local) == nullptr){
-            return split(now);
+            return utcParts();
         }
-        #endif
-        return calendarParts{
-            local.tm_year + 1900,
-            static_cast<unsigned>(local.tm_mon + 1),
-            static_cast<unsigned>(local.tm_mday),
-            static_cast<unsigned>(local.tm_hour),
-            static_cast<unsigned>(local.tm_min),
-            static_cast<unsigned>(local.tm_sec)};
     #endif
+        return fromTm(local);
     }
 
     /** hh:mm:ss, with an AM/PM suffix and a 1-12 hour on the 12 hour face. */
@@ -139,12 +115,8 @@ class timeKeeper{
         return std::string(buildTime);
     }
 
-    std::chrono::year_month_day getMYD()const {
-        const auto parts = localParts();
-        return std::chrono::year_month_day{
-            std::chrono::year{parts.year},
-            std::chrono::month{parts.month},
-            std::chrono::day{parts.day}};
+    calendarParts getMYD()const {
+        return localParts();
     }
 
     /**
@@ -177,7 +149,7 @@ class timeKeeper{
     * @returns the elapsed time of the clock, down to the nanosecond,
     * formatted as hh:mm:ss.nnnnnnnnn
     *
-    * Returns std::string by value: a string_view into a local buffer would
+    * Returns std::string by value: a pointer into a local buffer would
     * dangle the moment this function returns.
     */
     std::string highResolutionPeekTime() const {
@@ -190,20 +162,20 @@ class timeKeeper{
 
         char buildTime[32];
         std::snprintf(buildTime, sizeof(buildTime), "%02lld:%02lld:%02lld.%09lld",
-                      static_cast<long long>(hours.count()),
-                      static_cast<long long>(minutes.count()),
-                      static_cast<long long>(seconds.count()),
-                      static_cast<long long>(nanos));
+            static_cast<long long>(hours.count()),
+            static_cast<long long>(minutes.count()),
+            static_cast<long long>(seconds.count()),
+            static_cast<long long>(nanos));
 
         return std::string(buildTime);
     }
 
-    std::size_t timePassedInMilliseconds() const {
+    std::size_t timePassedInMilliseconds() const{
         return static_cast<std::size_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(elapsed()).count());
     }
 
-    std::size_t timePassedInNanoseconds() const {
+    std::size_t timePassedInNanoseconds() const{
         return static_cast<std::size_t>(elapsed().count());
     }
 
@@ -237,11 +209,11 @@ class timeKeeper{
 
 
     /**
-    * @returns the full English month name. The view points at static storage,
+    * @returns the full English month name. The pointer targets static storage,
     * so it stays valid for the life of the program.
     */
-    std::string_view monthString() const{
-        static constexpr std::array<std::string_view, 12> names{
+    const char* monthString() const{
+        static const char* const names[12] = {
             "January", "February", "March",     "April",   "May",      "June",
             "July",    "August",   "September", "October", "November", "December"};
 
@@ -257,30 +229,29 @@ class timeKeeper{
     * somehow invalid.
     */
     u_int8_t monthIntegral() const {
-        const auto ymd = getMYD();
-        if(!ymd.ok()){
+        const auto parts = getMYD();
+        if(parts.month < 1 || parts.month > 12){
             return 0;
         }
-        return static_cast<u_int8_t>(static_cast<unsigned>(ymd.month()));
+        return static_cast<u_int8_t>(parts.month);
     }
 
     /**
     * @returns the current day of the month, 1-31. 0 if the date is invalid.
     */
     u_int8_t dayIntegral() const {
-        const auto ymd = getMYD();
-        if(!ymd.ok()){
+        const auto parts = getMYD();
+        if(parts.day < 1 || parts.day > 31){
             return 0;
         }
-        return static_cast<u_int8_t>(static_cast<unsigned>(ymd.day()));
+        return static_cast<u_int8_t>(parts.day);
     }
 
     /**
     * @returns the current year, e.g. 2026.
     */
     u_int16_t yearIntegral() const {
-        const auto ymd = getMYD();
-        return static_cast<u_int16_t>(static_cast<int>(ymd.year()));
+        return static_cast<u_int16_t>(getMYD().year);
     }
 
     /**
@@ -304,14 +275,5 @@ class timeKeeper{
     }
 
 };
-
-using timeType = std::optional<std::variant<std::chrono::hours, std::chrono::minutes, std::chrono::seconds, 
-        std::chrono::milliseconds, std::chrono::nanoseconds>>;
-/**
-* DO NOT USE, UNFINISHED
-*/
-constexpr timeType convertTimeToNextUnit(const bool convertToSmallerUnit, const bool _time){
-    return std::nullopt;
-}
 }
 }//bstd
