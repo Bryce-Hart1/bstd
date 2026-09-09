@@ -179,6 +179,40 @@ class timeKeeper{
         return static_cast<std::size_t>(elapsed().count());
     }
 
+    /**
+    * @returns the elapsed time scaled to the largest unit that keeps the
+    * printed number under 1000, with the unit appended: ns, us, ms, s, min or
+    * hr. Nanoseconds print whole; every larger unit prints 3 decimals.
+    */
+    std::string timePassedInAuto() const {
+        const long long nanos = static_cast<long long>(elapsed().count());
+        char buildTime[32];
+
+        if(nanos < 1000LL){
+            std::snprintf(buildTime, sizeof(buildTime), "%lld ns", nanos);
+            return std::string(buildTime);
+        }
+
+        //ns per unit, and the value at which the next unit takes over (0 == none)
+        static const long long perUnit[5]  = {1000LL, 1000000LL, 1000000000LL, 60000000000LL, 3600000000000LL};
+        static const long long ceiling[5]  = {1000LL, 1000LL, 60LL, 60LL, 0LL};
+        static const char* const unitName[5] = {"us", "ms", "s", "min", "hr"};
+
+        for(int i = 0; i < 5; ++i){
+            //integer math, so the rounding that gets printed is the rounding that gets tested
+            const long long step = perUnit[i] / 1000LL;
+            const long long thousandths = (nanos + step / 2LL) / step;
+
+            if(ceiling[i] == 0LL || thousandths < ceiling[i] * 1000LL){
+                std::snprintf(buildTime, sizeof(buildTime), "%lld.%03lld %s",
+                    thousandths / 1000LL, thousandths % 1000LL, unitName[i]);
+                return std::string(buildTime);
+            }
+        }
+
+        return std::string("0 ns"); //unreachable, hr has no ceiling
+    }
+
 
     void reset() {
         _startTime = std::chrono::high_resolution_clock::now();
