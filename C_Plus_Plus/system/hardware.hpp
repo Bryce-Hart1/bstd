@@ -334,9 +334,7 @@ inline const std::optional<double> cpuTemp() noexcept{
     return bstd::syst::cpuTemp(1);
 }
 
-inline const std::optional<uint64_t> diskSpace(){
 
-}
 
 }
 }
