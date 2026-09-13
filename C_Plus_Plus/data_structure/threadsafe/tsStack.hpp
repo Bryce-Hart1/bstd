@@ -8,10 +8,16 @@ namespace ts{
     /**
     * @author Bryce Hart @date 9/12/26
     *
-    * A threadsafe stack class that I made for fun.
+    * A threadsafe stack class.
     * Uses a `shared mutex` that is shared between the whole class for read and write access.
     * if you feel there is anything missing / should be added to this class, open an issue on 
-    github. */
+    * github.
+    * @attention no move or copy constructors because `std::shared mutex`
+    * is not movable or copyable.    
+    * @details uses `std::vector` under the hood so most functions are built around trying 
+    * to make it as close to it as possible as far as capacities.
+    * @version Works in: >= Cpp2020
+    */
     template <typename T> class Stack{
         private:
         std::vector<T> _data;
@@ -40,6 +46,12 @@ namespace ts{
         Stack& operator=(const Stack&) = delete;
         Stack(Stack&&) = delete;
         Stack& operator=(Stack&&) = delete;
+
+
+        /* Clears all elements inside the vector. */
+        void clear(){
+            _data.clear();
+        }
         /**
         * @returns item at the top of the stack
         * does not pop the top item, just peeks
@@ -90,10 +102,15 @@ namespace ts{
 
         /**
         * @returns amount of items in the stack
-         */
+        */
         std::size_t size() const{
             shared_access lock(_access);
             return _data.size();
+        }
+
+        /* Reserves space inside the stack to prevent relocation */
+        void reserve(std::size_t& space){
+            _data.reserve(space);
         }
 
 
