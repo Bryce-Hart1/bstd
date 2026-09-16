@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <exception>
 #include <fstream>
 #include <functional>
 #include <iterator>
