@@ -1,4 +1,11 @@
+#pragma once
+
+#include <compare>
+#include <cstddef>
+#include <mutex>
+#include <optional>
 #include <shared_mutex>
+#include <utility>
 #include <vector>
 
 namespace bstd{
@@ -10,11 +17,11 @@ namespace ts{
     *
     * A threadsafe stack class.
     * Uses a `shared mutex` that is shared between the whole class for read and write access.
-    * if you feel there is anything missing / should be added to this class, open an issue on 
+    * if you feel there is anything missing / should be added to this class, open an issue on
     * github.
     * @attention no move or copy constructors because `std::shared mutex`
-    * is not movable or copyable.    
-    * @details uses `std::vector` under the hood so most functions are built around trying 
+    * is not movable or copyable.
+    * @details uses `std::vector` under the hood so most functions are built around trying
     * to make it as close to it as possible as far as capacities.
     * @version Works in: >= Cpp2020
     */
@@ -24,6 +31,21 @@ namespace ts{
         mutable std::shared_mutex _access;
         using unique_access = std::unique_lock<std::shared_mutex>;
         using shared_access = std::shared_lock<std::shared_mutex>;
+
+        /**
+        * Gets read access to this stack and `other` at the same time without deadlocking.
+        * Only locks once if `other` is this stack, locking the same mutex twice is undefined.
+        */
+        std::pair<shared_access, shared_access> readBoth(const Stack& other) const{
+            shared_access lock(_access, std::defer_lock);
+            shared_access otherLock(other._access, std::defer_lock);
+            if(this == &other){
+                lock.lock();
+            }else{
+                std::lock(lock, otherLock);
+            }
+            return {std::move(lock), std::move(otherLock)};
+        }
 
 
         public:
@@ -50,34 +72,40 @@ namespace ts{
 
         /* Clears all elements inside the vector. */
         void clear(){
+            unique_access lock(_access);
             _data.clear();
         }
         /**
-        * @returns item at the top of the stack
+        * @returns item at the top of the stack, or `std::nullopt` if the stack is empty.
         * does not pop the top item, just peeks
         */
-        T front() const{
+        std::optional<T> front() const{
             shared_access lock(_access);
+            if(_data.empty()){
+                return std::nullopt;
+            }
             return _data.back();
         }
 
 
         /**
         * check if the stack is completely empty.
-        * @returns `true` if the stack has any elements, `false` if not.
+        * @returns `true` if the stack has no elements, `false` if it does.
          */
-        const bool isEmpty(){
+        bool isEmpty() const{
             shared_access lock(_access);
             return _data.empty();
         }
 
         /**
         * pops top of stack.
-        * deletes top item in stack without returning item.
+        * deletes top item in stack without returning item. Does nothing if the stack is empty.
         */
         void pop(){
             unique_access lock(_access);
-            _data.pop_back();
+            if(!_data.empty()){
+                _data.pop_back();
+            }
         }
 
         /**
@@ -95,8 +123,9 @@ namespace ts{
          */
         void push(std::vector<T> values){
             unique_access lock(_access);
-            for(T v : values){
-                push(v);
+            _data.reserve(_data.size() + values.size());
+            for(T& v : values){
+                _data.push_back(std::move(v)); //lock already held, calling push(T) here would deadlock
             }
         }
 
@@ -109,33 +138,32 @@ namespace ts{
         }
 
         /* Reserves space inside the stack to prevent relocation */
-        void reserve(std::size_t& space){
+        void reserve(std::size_t space){
+            unique_access lock(_access);
             _data.reserve(space);
         }
 
 
         void operator+=(T value){
-            push(value);//gets lock access inside
+            push(std::move(value));//gets lock access inside
         }
 
         void operator+=(std::vector<T> values){
-            unique_access lock(_access);
-            push(values);
+            push(std::move(values));//gets lock access inside
         }
 
-        auto operator<=>(const Stack& other){
-            shared_access lock(_access);
+        auto operator<=>(const Stack& other) const{
+            auto locks = readBoth(other);
             return _data <=> other._data;
         }
 
-        bool operator==(const Stack& other){
-            shared_access lock(_access);
+        bool operator==(const Stack& other) const{
+            auto locks = readBoth(other);
             return other._data == _data;
         }
 
-        bool operator!=(const Stack& other){
-            shared_access lock(_access);
-            return other._data != _data;
+        bool operator!=(const Stack& other) const{
+            return !(*this == other);//gets lock access inside
         }
 
     };
