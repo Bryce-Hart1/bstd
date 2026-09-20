@@ -2,10 +2,8 @@
 
 #include <shared_mutex>
 #include <mutex>
-#include <thread>
 #include <iostream>
 #include <cstddef>
-#include "exceptions.hpp"
 
 /** Bryce Hart
  * @attention complete vector implementation
