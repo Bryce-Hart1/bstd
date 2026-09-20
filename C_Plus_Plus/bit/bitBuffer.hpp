@@ -1,6 +1,8 @@
+#pragma once
 #include <vector>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <bitset>
 
 namespace bstd {
@@ -162,7 +164,7 @@ public:
     //  Iteration (read-only)
     struct Iterator {
         const BitBuffer& buf;
-        size_t           idx;
+        size_t idx;
 
         bool operator*() const {
             return buf[idx]; 
@@ -202,6 +204,7 @@ public:
     size_t paddingBits() const {
         return _bitCount == 0 ? 0 : (8 - _bitCount % 8) % 8;
     }
+    
     /**
     * Readable bitset utility
      */

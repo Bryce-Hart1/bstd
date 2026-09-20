@@ -5,7 +5,7 @@
 #include <cstring>
 #include <vector>
 template <typename T>
-using vec = threadsafe::vec<T>;
+using vec = bstd::ds::ts::vec<T>;
 using size_t = std::size_t;
 using strView = std::string_view;
 
