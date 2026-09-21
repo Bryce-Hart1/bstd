@@ -14,8 +14,6 @@
 * @author Bryce Hart @date Sept 21
 * Requires C++17 or newer. 
 * Basically tries to mirror the rust Result<> type
-
-
 */
 namespace bstd {
 namespace error {
@@ -103,8 +101,7 @@ detail::ErrValue<std::decay_t<E>> Err(E&& error) {
 template <typename T, typename E = Error>
 class [[nodiscard]] Result {
     static_assert(!std::is_void_v<E>, "Result's error type cannot be void");
-    static_assert(!std::is_reference_v<T> && !std::is_reference_v<E>,
-                  "Result cannot hold references");
+    static_assert(!std::is_reference_v<T> && !std::is_reference_v<E>, "Result cannot hold references");
 
 private:
         //type and error
@@ -135,8 +132,7 @@ private:
             std::invoke(std::forward<F>(f), valueOf(std::forward<Self>(self)));
             return Result<U, E>(Ok());
         } else {
-            return Result<U, E>(
-                Ok(std::invoke(std::forward<F>(f), valueOf(std::forward<Self>(self)))));
+            return Result<U, E>(Ok(std::invoke(std::forward<F>(f), valueOf(std::forward<Self>(self)))));
         }
     }
 
@@ -205,6 +201,8 @@ public:
         if (isOk()) return std::get<0>(_data);
         return static_cast<T>(std::forward<U>(fallback));
     }
+
+    /* The value if Ok, otherwise the fallback. */
     template <typename U>
     T unwrapOr(U&& fallback) && {
         if (isOk()) return std::get<0>(std::move(_data));
