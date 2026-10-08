@@ -1,3 +1,4 @@
+#pragma once
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -19,7 +20,7 @@ namespace bit{
 */
 template<typename Type>
 std::optional<unsigned char> value_at_byte(const Type& value, std::size_t at){
-    static_assert(std::is_trivially_copy_constructible_v<Type>, "Object must be trivially copyable.");
+    static_assert(std::is_trivially_copyable_v<Type>, "Object must be trivially copyable.");
     if(sizeof(Type) <= at){
         return std::nullopt;
     }
