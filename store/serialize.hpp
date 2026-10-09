@@ -141,7 +141,7 @@ class bin8{
     };
 
     public:
-    using all_types = std::variant<bool, u_int8_t, int8_t, char>;
+    using all_types = std::variant<bool, std::uint8_t, int8_t, char>;
 
     private:
     std::uint8_t _data;
@@ -650,7 +650,7 @@ constexpr std::string_view as_view(const T& s) noexcept{
 */
 class binString{
     private:
-    using u8 = u_int8_t;
+    using u8 = std::uint8_t;
     using iterator = std::vector<uint8_t>::iterator;
     using const_iterator = std::vector<uint8_t>::const_iterator;
     std::vector<u8> _data;
@@ -707,7 +707,7 @@ class binString{
 
     /**  Push a single @param other (char) to the back of the string */
     void push_back(const char& other){
-        _data.emplace_back(std::bit_cast<u_int8_t>(other));
+        _data.emplace_back(std::bit_cast<std::uint8_t>(other));
     }
 
 

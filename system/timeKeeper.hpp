@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <string>
@@ -28,7 +29,7 @@ enum class time{
 * zone lookup fails rather than throwing.
 */
 class timeKeeper{
-    using u8 = u_int8_t; //only for use inside implementation
+    using u8 = std::uint8_t; //only for use inside implementation
     using highResClock = std::chrono::time_point<std::chrono::high_resolution_clock>;
 
     private:
@@ -262,30 +263,30 @@ class timeKeeper{
     * @returns the current month, 1 == January. 0 if the calendar date is
     * somehow invalid.
     */
-    u_int8_t monthIntegral() const {
+    std::uint8_t monthIntegral() const {
         const auto parts = getMYD();
         if(parts.month < 1 || parts.month > 12){
             return 0;
         }
-        return static_cast<u_int8_t>(parts.month);
+        return static_cast<std::uint8_t>(parts.month);
     }
 
     /**
     * @returns the current day of the month, 1-31. 0 if the date is invalid.
     */
-    u_int8_t dayIntegral() const {
+    std::uint8_t dayIntegral() const {
         const auto parts = getMYD();
         if(parts.day < 1 || parts.day > 31){
             return 0;
         }
-        return static_cast<u_int8_t>(parts.day);
+        return static_cast<std::uint8_t>(parts.day);
     }
 
     /**
     * @returns the current year, e.g. 2026.
     */
-    u_int16_t yearIntegral() const {
-        return static_cast<u_int16_t>(getMYD().year);
+    std::uint16_t yearIntegral() const {
+        return static_cast<std::uint16_t>(getMYD().year);
     }
 
     /**

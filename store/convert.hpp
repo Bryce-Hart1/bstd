@@ -1,3 +1,4 @@
+#pragma once
 #include <bitset>
 #include <cmath>
 #include <cstdint>
@@ -9,9 +10,9 @@ namespace bstd{
 namespace store{
 namespace details{
 
-inline const u_int64_t valueForByteAt(const unsigned char& positionFromFirst, const unsigned char& byteValue){
+inline const std::uint64_t valueForByteAt(const unsigned char& positionFromFirst, const unsigned char& byteValue){
     if(positionFromFirst == 0){
-        return static_cast<u_int64_t>(byteValue);
+        return static_cast<std::uint64_t>(byteValue);
     }
     const int MAX_IN_BYTE = 256; //max in byte after the first
     return (std::pow(MAX_IN_BYTE, positionFromFirst));
