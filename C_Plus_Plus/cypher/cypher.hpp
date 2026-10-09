@@ -1,3 +1,4 @@
+#pragma once
 #include <cstdint>
 #include <cstdio>
 #include <cstring> //all 3 for AES

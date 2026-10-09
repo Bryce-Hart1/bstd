@@ -1,3 +1,5 @@
+#pragma once
+#include <cstdint>
 #include <vector>
 #include <map>
 #include <utility>
@@ -16,7 +18,7 @@ class huffmanTree {
 private:
 
 class BitBuffer {
-    using u8 = u_int8_t;
+    using u8 = std::uint8_t;
     using size_t = std::size_t;
 
 private:
