@@ -165,11 +165,11 @@ class autoCorrectFilter{
             return _dictionary.size();
         }
         inline bool isInDictionary(std::string_view word){
-            if(!word.contains(word.length())){
+            const auto bucket = _dictionary.find(word.length());
+            if(bucket == _dictionary.end()){
                 return false;
             }
-            std::vector<std::string_view> vec = _dictionary.at(word.length());
-            for(const auto& w : vec){
+            for(const auto& w : bucket->second){
                 if(w == word){
                     return true;
                 }
