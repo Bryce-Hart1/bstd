@@ -16,11 +16,11 @@ class avlTree{
 
     public:
 
-    bool insert(const Type& value){
+    bool insert(const Type& /*value*/){
 
     }
 
-    bool erase(const Type& value){
+    bool erase(const Type& /*value*/){
 
     }
     
@@ -33,7 +33,7 @@ class avlTree{
         
     }
 
-    bool contains(const Type& value) const{
+    bool contains(const Type& /*value*/) const{
 
     }
 
@@ -45,7 +45,7 @@ class avlTree{
         insert(value); 
     }
 
-    bool operator=(const avlTree tree){
+    bool operator=(const avlTree /*tree*/){
 
     }
 
