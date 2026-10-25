@@ -87,7 +87,7 @@ class formattedNumber{
 
 
 /** How many @param item in @param x*/
-inline const std::size_t howManyOf(std::string_view item, std::string_view x){
+inline std::size_t howManyOf(std::string_view item, std::string_view x){
     std::size_t count = 0;
     if(x.size() < item.size()){
         return 0;
@@ -109,7 +109,7 @@ inline const std::size_t howManyOf(std::string_view item, std::string_view x){
 }
 
 /** How many @param this in @param x*/
-inline const std::size_t howManyOf(std::size_t This, std::size_t x){
+inline std::size_t howManyOf(std::size_t This, std::size_t x){
     return howManyOf(static_cast<std::string_view>(std::to_string(This)),
     static_cast<std::string_view>(std::to_string(x)));
 }
