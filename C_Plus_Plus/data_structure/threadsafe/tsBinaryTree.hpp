@@ -140,7 +140,7 @@ struct spinLock{
 
             template <typename Type>
             requires std::integral<Type>
-            void add(Type value){
+            void add(Type /*value*/){
                 auto current = this->root;
                 root++;
                 while(current.left != nullptr && current.right != nullptr){
@@ -163,7 +163,7 @@ struct spinLock{
                     return;
                 }
 
-                const sizeT middleIndex = (this->size / 2);
+                [[maybe_unused]] const sizeT middleIndex = (this->size / 2);
                 node newRoot{};
 
             }

@@ -92,7 +92,7 @@ namespace ts{
         }
 
         //must already be resized to +1, and the startFrom index will exist twice, once at i = 0, and i = 1
-        void p_moveRight(std::size_t startFrom){
+        void p_moveRight(std::size_t /*startFrom*/){
             for(int i = 0; i < v_Size; i++){
                 v_Data[i+1] = v_Data[i];
             }
@@ -158,7 +158,7 @@ namespace ts{
         //I assume this would not be the defaulted wanted behavior, but it is an option that I will provide
 
         //clears all elements and resets size
-        void clear(const bool RESET_CAPACITY){
+        void clear(const bool /*RESET_CAPACITY*/){
             std::shared_lock<std::shared_mutex> lock(v_mutex);
             v_Capacity = 2;
             clear();
