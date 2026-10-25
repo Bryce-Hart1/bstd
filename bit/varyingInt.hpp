@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <vector>
 #include <cstdint>
 
@@ -28,40 +29,40 @@ public:
     }
 
     // How many bytes we're actually using
-    size_t byte_size() const { 
+    std::size_t byte_size() const{
         return _bytes.size(); 
     }
 
-    VarInt& operator=(uint64_t val) { 
+    VarInt& operator=(uint64_t val){ 
         encode(val); return *this; 
     }
 
     // result is a new VarInt sized to fit
-    VarInt operator+(const VarInt& other) const { 
+    VarInt operator+(const VarInt& other) const{ 
         return VarInt(value() + other.value()); 
     }
 
-    VarInt operator-(const VarInt& other) const { 
+    VarInt operator-(const VarInt& other) const{ 
         return VarInt(value() - other.value()); 
     }
 
-    bool operator==(const VarInt& other) const {
+    bool operator==(const VarInt& other) const{
         return value() == other.value(); 
     }
 
-    bool operator<(const VarInt& other)  const { 
+    bool operator<(const VarInt& other) const{ 
         return value() < other.value();  
     }
 
     // implicit conversion so it feels like a number
-    operator uint64_t() const { 
+    operator uint64_t() const{ 
         return value(); 
     }
 
 private:
     std::vector<uint8_t> _bytes;
 
-    void encode(uint64_t val) {
+    void encode(uint64_t val){
         _bytes.clear();
         if (val == 0) { _bytes.push_back(0); return; }
         while (val > 0) {

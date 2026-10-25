@@ -84,7 +84,8 @@ static uint8_t gmul(uint8_t a, uint8_t b) {
 
 // Key expansion: turn the 32-byte key into 4*(Nr+1) = 60 round-key words
 // (240 bytes). This is the AES-256 schedule; note the extra SubWord step
-
+// Public: callers need the round keys for every encrypt/decrypt call below.
+public:
 void key_expansion(const uint8_t key[32], uint8_t roundKeys[240]) {
   memcpy(roundKeys, key, 32);          // first 8 words = the key itself
   uint8_t temp[4];
@@ -109,6 +110,7 @@ void key_expansion(const uint8_t key[32], uint8_t roundKeys[240]) {
       roundKeys[i * 4 + j] = roundKeys[(i - Nk) * 4 + j] ^ temp[j];
   }
 }
+private:
 
 // The four round operations. State is 16 bytes in column-major order
 // (state[r + 4*c] = row r, column c), matching the FIPS-197 spec.

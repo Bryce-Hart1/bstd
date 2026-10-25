@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <compare>
+#include <condition_variable>
 #include <cstddef>
 #include <mutex>
 #include <optional>
@@ -34,6 +35,8 @@ namespace ts{
         std::size_t _front = 0;
         std::size_t _count = 0;
         mutable std::shared_mutex _access;
+        std::condition_variable_any _ready; //`condition_variable` only works with `std::mutex`
+        bool _closed = false;
         using unique_access = std::unique_lock<std::shared_mutex>;
         using shared_access = std::shared_lock<std::shared_mutex>;
 
@@ -64,6 +67,18 @@ namespace ts{
             if(_count + extra > _data.size()){
                 relocate(std::max(_count + extra, _data.empty() ? std::size_t(2) : _data.size() * 2));
             }
+        }
+
+        /* Moves the front item out and removes it. `std::nullopt` if empty. Shared by `tryPop` and `waitPop`. */
+        std::optional<T> takeFront(){
+            if(_count == 0){
+                return std::nullopt;
+            }
+            std::optional<T> item = std::move(_data[_front]);
+            _data[_front].reset();
+            _front = index(1);
+            _count--;
+            return item;
         }
 
         /**
@@ -174,10 +189,64 @@ namespace ts{
         * @param value data to be pushed to the back of the queue.
         */
         void push(T value){
+            {
+                unique_access lock(_access);
+                makeRoom(1);
+                _data[index(_count)] = std::move(value);
+                _count++;
+            }
+            _ready.notify_one();
+        }
+
+        /**
+        * push an element only if the queue holds fewer than `maxSize` items.
+        * The size check and the push happen under one lock, so it can be used for backpressure.
+        * @returns `true` if pushed, `false` if the queue was full.
+        */
+        bool tryPush(T value, std::size_t maxSize){
+            {
+                unique_access lock(_access);
+                if(_count >= maxSize){
+                    return false;
+                }
+                makeRoom(1);
+                _data[index(_count)] = std::move(value);
+                _count++;
+            }
+            _ready.notify_one();
+            return true;
+        }
+
+        /**
+        * Removes and returns the front item in one lock, so two threads can never take the same item.
+        * Works with move-only types.
+        * @returns the oldest item, or `std::nullopt` if the queue is empty.
+        */
+        std::optional<T> tryPop(){
             unique_access lock(_access);
-            makeRoom(1);
-            _data[index(_count)] = std::move(value);
-            _count++;
+            return takeFront();
+        }
+
+        /**
+        * Blocks until an item is available, then removes and returns it.
+        * @returns the oldest item, or `std::nullopt` only once the queue is closed and drained.
+        */
+        std::optional<T> waitPop(){
+            unique_access lock(_access);
+            _ready.wait(lock, [this]{return _count > 0 || _closed;});
+            return takeFront();
+        }
+
+        /**
+        * Wakes every thread blocked in `waitPop`. Once the queue is drained they receive `std::nullopt`.
+        * Does not reject later pushes, whether to keep accepting work is up to the owner.
+        */
+        void close(){
+            {
+                unique_access lock(_access);
+                _closed = true;
+            }
+            _ready.notify_all();
         }
 
         /**
@@ -185,12 +254,15 @@ namespace ts{
         * front of vector is pushed first.
          */
         void push(std::vector<T> values){
-            unique_access lock(_access);
-            makeRoom(values.size());
-            for(T& v : values){
-                _data[index(_count)] = std::move(v); //lock already held, calling push(T) here would deadlock
-                _count++;
+            {
+                unique_access lock(_access);
+                makeRoom(values.size());
+                for(T& v : values){
+                    _data[index(_count)] = std::move(v); //lock already held, calling push(T) here would deadlock
+                    _count++;
+                }
             }
+            _ready.notify_all();
         }
 
         /**
