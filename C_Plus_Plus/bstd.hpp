@@ -2,7 +2,7 @@
 /**
 * bstd @version 1 @author Bryce Hart
 * @details includes all of bstd. Each part is only included when the compiler's C++ version supports it,
-* so this compiles on C++11 and up and gives you everything that version allows (C++23 for all of it).
+* so this compiles on C++11 and up and gives you everything that version allows (C++20 for all of it).
 * Nothing here needs a specific OS: Windows, Linux and macOS all get the same headers.
 */
 
@@ -36,6 +36,7 @@
 
 #if BSTD_CPP >= 201703L
     #include "bit/convertBit.hpp"
+    #include "data_structure/threadsafe/tsHashmap.hpp"
     #include "data_structure/threadsafe/tsTrie.hpp"
     #include "data_structure/threadsafe/tsVector.hpp"
     #include "encode/encode.hpp"
@@ -46,24 +47,17 @@
 #endif //C++17
 
 #if BSTD_CPP >= 202002L
-    #include <version>
     #include "bit/bitBuffer.hpp"
     #include "bit/writeBin.hpp"
     #include "data_structure/threadsafe/tsBinaryTree.hpp"
     #include "data_structure/threadsafe/tsQueue.hpp"
     #include "data_structure/threadsafe/tsStack.hpp"
     #include "data_structure/tree.hpp"
+    #include "form/autoCorrect.hpp"
     #include "form/numFormat.hpp"
     #include "store/log.hpp"
     #include "store/serialize.hpp"
-
-    // std::string_view::contains is C++23, checked by feature so older compilers' C++2b modes still get it
-    #if defined(__cpp_lib_string_contains)
-        #include "form/autoCorrect.hpp"
-    #endif
 #endif //C++20
-
-// data_structure/threadsafe/tsHashmap.hpp is left out until it compiles
 
 #if defined(_WIN32)
     #pragma pop_macro("max")
