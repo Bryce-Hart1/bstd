@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <chrono>
 #include <fstream>
 #include <limits>
@@ -53,9 +54,18 @@ struct LoadAverage{
 /**
 * @author Bryce Hart @date Jul 2026
 * Reads all three kernel load averages in a single pass.
-* @returns nullopt if /proc/loadavg is missing or malformed.
+* Uses getloadavg() on macOS/BSD and /proc/loadavg elsewhere.
+* @returns nullopt if the figures are unavailable or malformed.
 */
 inline std::optional<LoadAverage> loadAverages() noexcept{
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    //no procfs here, but libc has getloadavg
+    double avg[3] = {0.0, 0.0, 0.0};
+    if(getloadavg(avg, 3) != 3){
+        return std::nullopt;
+    }
+    return LoadAverage{avg[0], avg[1], avg[2]};
+#else
     try{
         std::ifstream f("/proc/loadavg");
         if(!f){
@@ -71,6 +81,7 @@ inline std::optional<LoadAverage> loadAverages() noexcept{
     }catch(...){
         return std::nullopt;
     }
+#endif
 }
 
 /**
@@ -136,6 +147,27 @@ namespace privateMembers{
         }
     }
 
+    //busy share between two readings, nullopt if the counters did not advance
+    inline std::optional<double> percentBetween(const CpuTimes& a, const CpuTimes& b) noexcept{
+        //counters are monotonic; a non advancing total means no usable window
+        if(b.total <= a.total){
+            return std::nullopt;
+        }
+        const double totalDelta = static_cast<double>(b.total - a.total);
+        const double idleDelta = (b.idle > a.idle)
+            ? static_cast<double>(b.idle - a.idle)
+            : 0.0;
+
+        const double percent = ((totalDelta - idleDelta) / totalDelta) * 100.0;
+        if(percent < 0.0){
+            return 0.0;
+        }
+        if(percent > 100.0){
+            return 100.0;
+        }
+        return percent;
+    }
+
     //samples /proc/stat twice and reports the busy share of the window between them
     inline std::optional<double> sampleCpuUsage(std::chrono::milliseconds interval) noexcept{
         const std::optional<CpuTimes> a = readCpuTimes();
@@ -148,23 +180,7 @@ namespace privateMembers{
             return std::nullopt;
         }
 
-        //counters are monotonic; a non advancing total means no usable window
-        if(b->total <= a->total){
-            return std::nullopt;
-        }
-        const double totalDelta = static_cast<double>(b->total - a->total);
-        const double idleDelta = (b->idle > a->idle)
-            ? static_cast<double>(b->idle - a->idle)
-            : 0.0;
-
-        const double percent = ((totalDelta - idleDelta) / totalDelta) * 100.0;
-        if(percent < 0.0){
-            return 0.0;
-        }
-        if(percent > 100.0){
-            return 100.0;
-        }
-        return percent;
+        return percentBetween(*a, *b);
     }
 }
 
@@ -196,6 +212,38 @@ inline std::optional<double> cpuAveragePrecentUsage(
     const double scale = std::pow(10.0, precision);
     return std::round(percent.value() * scale) / scale;
 }
+
+
+/**
+* Non blocking CPU meter. Each call to usagePercent() reports the busy share since the previous
+* call, so pair it with a PeriodicTask instead of sleeping through a sample window.
+* Linux only (reads /proc/stat), returns nullopt elsewhere.
+* @attention not synchronized, call it from one thread.
+*/
+class CpuMeter{
+public:
+    CpuMeter() noexcept : _last(privateMembers::readCpuTimes()){}
+
+    /**
+    * @returns 0.0..100.0 since the last call (or construction), or nullopt if /proc/stat could not
+    * be read or no time has passed.
+    */
+    std::optional<double> usagePercent() noexcept{
+        const std::optional<privateMembers::CpuTimes> now = privateMembers::readCpuTimes();
+        if(!now.has_value()){
+            return std::nullopt;
+        }
+        const std::optional<privateMembers::CpuTimes> before = _last;
+        _last = now;
+        if(!before.has_value()){
+            return std::nullopt;
+        }
+        return privateMembers::percentBetween(*before, *now);
+    }
+
+private:
+    std::optional<privateMembers::CpuTimes> _last;
+};
 
 
 namespace privateMembers{
