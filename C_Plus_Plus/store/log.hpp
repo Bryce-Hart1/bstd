@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <cstdint>
 #include <iostream>
+#include <mutex>
 
 namespace bstd {
 namespace store {
@@ -129,6 +130,7 @@ public:
 
 
     void editWrites(bool silenceWarnings, bool silenceLow, bool silenceMed, bool silenceHigh) {
+        std::lock_guard<std::mutex> lock(_mutex);
         _optionSilenceWarn = silenceWarnings;
         _optionsWriteLow = !silenceLow;
         _optionsWriteMed  = !silenceMed;
@@ -137,6 +139,7 @@ public:
 
 
     void write(std::string_view message, severity level) {
+        std::lock_guard<std::mutex> lock(_mutex);
         if (!canBeWritten(level)) return; //adds noting if silenced
 
         std::ofstream out(_fileName, std::ios::app);
@@ -150,6 +153,7 @@ public:
 
 
     void readLast() {
+        std::lock_guard<std::mutex> lock(_mutex);
         _reader.reindex();
         const std::size_t n = _reader.line_count();
         if (n == 0)
@@ -158,6 +162,7 @@ public:
     }
 
     void clearLast() {
+        std::lock_guard<std::mutex> lock(_mutex);
         _reader.reindex();
         _reader.remove_last_line();
         _logCount = _reader.line_count();
@@ -218,6 +223,7 @@ private:
     }
 
 
+    std::mutex _mutex; //every public call locks it, the private helpers do not
     std::string _fileName;
     std::size_t _logCount;
     IndexedFileReader _reader;
