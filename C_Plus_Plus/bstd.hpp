@@ -41,6 +41,7 @@
     #include "data_structure/threadsafe/tsVector.hpp"
     #include "encode/encode.hpp"
     #include "error/errorType.hpp"
+    #include "net/json.hpp"          //only the platform independent parts of net, sockets/http need their own include
     #include "store/convert.hpp"
     #include "system/hardware.hpp"   //reads linux /proc and /sys, compiles everywhere but returns nullopt off linux
     #include "system/periodic.hpp"

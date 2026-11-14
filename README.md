@@ -18,6 +18,13 @@ bstd{
     encode{
         huffman
     }
+    net{
+        json{ //C++17, RFC 8259 parse/dump, Value, BSTD_JSON_FIELDS struct mapping
+            Value
+            parse
+            dump
+        }
+    }
     store{
         cypher{
             AES-256
