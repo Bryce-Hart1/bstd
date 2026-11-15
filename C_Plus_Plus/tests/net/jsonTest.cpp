@@ -1,6 +1,8 @@
 // Tests for net/json.hpp. Build and run from C_Plus_Plus/:
 //   c++ -std=c++17 -Wall -Wextra -pedantic tests/net/jsonTest.cpp -o /tmp/jsonTest && /tmp/jsonTest
+// or run every test with tests/run.sh
 #include "../../net/json.hpp"
+#include "../check.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -16,42 +18,6 @@
 
 namespace json = bstd::net::json;
 using Kind = json::Error::Kind;
-
-static int failures = 0;
-static int checks = 0;
-
-#define CHECK(cond)                                                                  \
-    do{                                                                              \
-        checks++;                                                                    \
-        if(!(cond)){                                                                 \
-            failures++;                                                              \
-            std::cerr << __FILE__ << ":" << __LINE__ << ": CHECK(" #cond ") failed\n"; \
-        }                                                                            \
-    } while(0)
-
-#define CHECK_EQ(a, b)                                                                              \
-    do{                                                                                             \
-        checks++;                                                                                   \
-        const auto& checkA = (a);                                                                   \
-        const auto& checkB = (b);                                                                   \
-        if(!(checkA == checkB)){                                                                    \
-            failures++;                                                                             \
-            std::cerr << __FILE__ << ":" << __LINE__ << ": " #a " == " #b " failed\n  left:  "        \
-                      << checkA << "\n  right: " << checkB << "\n";                                 \
-        }                                                                                           \
-    } while(0)
-
-#define CHECK_THROWS(expr, Exception)        \
-    do{                                      \
-        checks++;                            \
-        bool threw = false;                  \
-        try{ (void)(expr); }                 \
-        catch(const Exception&){ threw = true; } \
-        if(!threw){                          \
-            failures++;                      \
-            std::cerr << __FILE__ << ":" << __LINE__ << ": " #expr " did not throw " #Exception "\n"; \
-        }                                    \
-    } while(0)
 
 static json::Value ok(std::string_view text, const json::ParseOptions& opts = {}){
     auto r = json::parse(text, opts);
@@ -562,11 +528,5 @@ int main(){
     testValueApi();
     testPointer();
     testTyped();
-
-    if(failures){
-        std::cerr << failures << " of " << checks << " checks failed\n";
-        return 1;
-    }
-    std::cout << "all " << checks << " checks passed\n";
-    return 0;
+    return finishTests();
 }

@@ -3,6 +3,11 @@
 #include <climits>
 #include <cstdint>
 
+namespace bstd{
+/**
+* simple wrapper around int. use cases is when adding bit types. 
+* not yet completed.
+ */
 class Int{
     constexpr static int MAX = INT_MAX;
     constexpr static int MIN = INT_MIN;
@@ -10,14 +15,12 @@ class Int{
     private:
     std::atomic_int32_t _val;
 
-    explicit Int(int value){
-
-    }
+    public:
+    explicit Int(int value){}
 
     //flip bit number `bit_ind` from left to right
     void flip(const unsigned char bit_ind) noexcept{
-        int 
-        _val.exchange(__int_type i)
+        
     }
 
     void operator=(int value){
@@ -25,4 +28,5 @@ class Int{
     }
     
 
+};
 };

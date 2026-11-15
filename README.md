@@ -18,8 +18,15 @@ bstd{
     encode{
         huffman
     }
-    net{
-        json{ //C++17, RFC 8259 parse/dump, Value, BSTD_JSON_FIELDS struct mapping
+    net{ //C++17
+        Error
+        Url    //RFC 3986 parse, resolve, setters
+        Query  //query strings / form bodies
+        http{
+            Method, Status, Headers
+            Request, Response //build and serialize HTTP/1.1 messages
+        }
+        json{ //RFC 8259 parse/dump, Value, BSTD_JSON_FIELDS struct mapping
             Value
             parse
             dump
