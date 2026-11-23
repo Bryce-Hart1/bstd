@@ -1,9 +1,12 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <vector>
 #include <map>
 #include <utility>
 #include <string>
+#include <string_view>
 #include <queue>
 #include <memory>
 #include <stdexcept>
@@ -15,8 +18,12 @@ namespace encode {
 
 class huffmanTree {
 
-private:
+public:
 
+/**
+* The bits of one Huffman code, and what the bitstream constructor reads a serialized tree from.
+* Public so it can be named: `huffmanTree::BitBuffer bits; ... huffmanTree tree(bits);`
+*/
 class BitBuffer {
     using u8 = std::uint8_t;
     using size_t = std::size_t;
@@ -63,6 +70,25 @@ public:
     // Construction
     BitBuffer() = default;
 
+    BitBuffer(const BitBuffer&) = default;
+    BitBuffer& operator=(const BitBuffer&) = default;
+
+    // A moved from BitBuffer is left empty. The defaulted moves would empty its bytes but keep its bit count,
+    // and the next push() or operator[] on it would then read past the end of an empty vector.
+    BitBuffer(BitBuffer&& other) noexcept : _bytes(std::move(other._bytes)), _bitCount(other._bitCount){
+        other._bytes.clear();
+        other._bitCount = 0;
+    }
+    BitBuffer& operator=(BitBuffer&& other) noexcept{
+        if(this != &other){
+            _bytes = std::move(other._bytes);
+            _bitCount = other._bitCount;
+            other._bytes.clear();
+            other._bitCount = 0;
+        }
+        return *this;
+    }
+
     // Pre-allocate for n bits (all zero)
     explicit BitBuffer(size_t n): _bytes((n + 7) / 8, 0), _bitCount(n){}
 
@@ -70,31 +96,18 @@ public:
     explicit BitBuffer(std::vector<u8> raw): _bytes(std::move(raw)), _bitCount(_bytes.size() * 8){}
 
 
-    explicit BitBuffer(std::string_view constString){
-        std::bitset<8> byte{}; 
-        unsigned char itr = 0;
-        std::vector<unsigned char> send{};
-        for(const char c: constString){
-            if(itr == 8){
-                u8 current = static_cast<unsigned char>(byte.to_ulong());
-                send.push_back(current);
-                itr = 0;
-            }
-            if(c == '0'){
-                byte.set(itr) = false;
-            }else{
-                byte.set(itr) = true;
-            }
-            itr++;
+    /**
+    * writes from a string that Appears as char `1` or char `0`, first char = first bit (MSB-first, like push())
+    *
+    * non `0` characters will be saved as `true`
+    * @details size() is exactly `bits.size()`, a partial last byte is kept and padded with 0s.
+    * Also takes a `std::string` (it converts to `std::string_view`), the same as `bstd::bit::BitBuffer`.
+    */
+    explicit BitBuffer(std::string_view bits){
+        reserve(bits.size());
+        for(const char c : bits){
+            push(c != '0');
         }
-        _bytes = (std::move(send));
-        _bitCount = (_bytes.size() * 8);
-    }
-
-    explicit BitBuffer(std::string String){
-        std::string_view view(String);
-        BitBuffer _x(view);
-        
     }
 
     //  Bit pushing
@@ -115,8 +128,10 @@ public:
     }
 
     // Append every bit from another BitBuffer obj
+    // Pushing a buffer onto itself appends one copy of what it held before the call.
     void push(const BitBuffer& _other) {
-        for (size_t i = 0; i < _other._bitCount; ++i)
+        const size_t count = _other._bitCount; // read once: when _other is this buffer, _bitCount grows with every push
+        for (size_t i = 0; i < count; ++i)
             push(static_cast<bool>(_other[i]));
     }
 
@@ -130,8 +145,10 @@ public:
         if (i >= _bitCount) throw std::out_of_range("BitBuffer index out of range");
         return (_bytes[byteIndex(i)] >> bitOffset(i)) & 1u;
     }
-    void operator+=(const bool b){
-        _bytes.push_back(b);
+    // Append one bit, same as push(bool)
+    BitBuffer& operator+=(const bool b){
+        push(b);
+        return *this;
     }
 
     bool at(size_t i) const { 
@@ -227,19 +244,26 @@ public:
 
 
 
+private:
+
     using u8 = uint8_t;
     using size_t = std::size_t;
+
+    // A tree over `char` has at most 256 leaves, so it is never deeper than 255. A serialized tree that nests
+    // deeper than this is rejected instead of recursed into: without a limit a bitstream of nothing but 0s
+    // recurses once per bit and overflows the stack.
+    static constexpr size_t kMaxTreeDepth = 1024;
 
     //node def
     struct Node {
         char ch    = '\0';
-        int  freq  = 0;
+        long long freq = 0; // wider than the int frequencies it sums, so adding two of them can't overflow
         std::shared_ptr<Node> left, right;
 
         // Leaf constructor
-        Node(char c, int f) : ch(c), freq(f) {}
+        Node(char c, long long f) : ch(c), freq(f) {}
         // Internal constructor
-        Node(int f, std::shared_ptr<Node> l, std::shared_ptr<Node> r)
+        Node(long long f, std::shared_ptr<Node> l, std::shared_ptr<Node> r)
             : freq(f), left(std::move(l)), right(std::move(r)) {}
 
         bool isLeaf() const {
@@ -279,21 +303,28 @@ public:
         }
     }
 
-    std::shared_ptr<Node> deserializeNode(const BitBuffer& bits, size_t& idx) {
+    std::shared_ptr<Node> deserializeNode(const BitBuffer& bits, size_t& idx, size_t depth = 0) {
         if (idx >= bits.size())
             throw std::runtime_error("Truncated tree bitstream");
+        if (depth > kMaxTreeDepth)
+            throw std::runtime_error("Tree bitstream is nested too deep");
 
         if (bits[idx++]) {          // leaf
             if (idx + 8 > bits.size())
                 throw std::runtime_error("Truncated char in tree bitstream");
-            char c = 0;
+            u8 c = 0;
             for (int i = 7; i >= 0; --i)
-                c |= static_cast<char>(bits[idx++]) << i;
-            return std::make_shared<Node>(c, 0);
+                c = static_cast<u8>(c | (static_cast<unsigned>(bits[idx++]) << i));
+            return std::make_shared<Node>(static_cast<char>(c), 0);
         }
         // internal node
-        auto left  = deserializeNode(bits, idx);
-        auto right = deserializeNode(bits, idx);
+        auto left  = deserializeNode(bits, idx, depth + 1);
+        // A one symbol tree is written as [0][leaf] with nothing for the right side (see constructor 1), so at
+        // the root a missing right side is fine. A leaf takes 9 bits; fewer than that left over is only the
+        // zero padding of the last byte.
+        if (depth == 0 && left->isLeaf() && bits.size() - idx < 9)
+            return std::make_shared<Node>(0, std::move(left), nullptr);
+        auto right = deserializeNode(bits, idx, depth + 1);
         return std::make_shared<Node>(0, std::move(left), std::move(right));
     }
 
@@ -331,10 +362,19 @@ public:
         buildCodes(root, {});
     }
 
+    // Same as constructor 1, for a braced list: huffmanTree({{'a', 5}, {'b', 2}}).
+    // Without it a list of one pair, huffmanTree({{'a', 5}}), is ambiguous on GCC: the braces could also be
+    // read as the bytes of a BitBuffer for constructor 2.
+    huffmanTree(std::initializer_list<std::pair<char, int>> pairs)
+        : huffmanTree(std::vector<std::pair<char, int>>(pairs)) {}
+
     // Constructor 2 – rebuild from a serialized bitstream
     explicit huffmanTree(const BitBuffer& bits) {
         size_t idx = 0;
         root = deserializeNode(bits, idx);
+        // a bitstream that is one bare leaf: wrap it like constructor 1 does, so decode() has a branch to follow
+        if (root->isLeaf())
+            root = std::make_shared<Node>(0, root, nullptr);
         buildCodes(root, {});
     }
 
@@ -358,14 +398,17 @@ public:
     std::string decode(const std::vector<bool>& bits) const {
         if (!root) return {};
         std::string result;
-        auto node = root;
+        // plain pointers: the tree can't change while decoding, and copying a shared_ptr per bit
+        // means two atomic reference count updates per bit
+        const Node* const top = root.get();
+        const Node* node = top;
         for (bool bit : bits) {
-            node = bit ? node->right : node->left;
+            node = bit ? node->right.get() : node->left.get();
             if (!node)
                 throw std::runtime_error("Invalid bitstream: no node at bit");
             if (node->isLeaf()) {
                 result += node->ch;
-                node = root;// walk back to root for next symbol
+                node = top;// walk back to root for next symbol
             }
         }
         return result;
