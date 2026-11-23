@@ -301,11 +301,16 @@ class timeKeeper{
     * @returns the local date as YYYY-MM-DD.
     */
     std::string dateString() const {
+        // one reading of the clock for all three fields: asking for the year, month and day separately can
+        // straddle midnight and print a date that never existed
+        const calendarParts parts = getMYD();
+        const unsigned month = (parts.month < 1 || parts.month > 12) ? 0u : parts.month;
+        const unsigned day = (parts.day < 1 || parts.day > 31) ? 0u : parts.day;
         char buildDate[16];
         std::snprintf(buildDate, sizeof(buildDate), "%04u-%02u-%02u",
-                static_cast<unsigned>(yearIntegral()),
-                static_cast<unsigned>(monthIntegral()),
-                static_cast<unsigned>(dayIntegral()));
+                static_cast<unsigned>(static_cast<std::uint16_t>(parts.year)),
+                month,
+                day);
         return std::string(buildDate);
     }
 
