@@ -43,11 +43,15 @@ public:
             _stop = true;
         }
         _cv.notify_all();
-        if (_thread.joinable() && _thread.get_id() != std::this_thread::get_id()){
-            std::lock_guard joinLock(_joinMtx); //two threads calling stop() must not both join
-            if (_thread.joinable()){
-                _thread.join();
-            }
+        // _thread is only ever looked at with _joinMtx held: join() writes to it, so a second stop() checking
+        // joinable() without the lock would race with a first one that is still joining.
+        // The worker can't take that lock (it would wait on whoever is joining it), so it is told apart by the id it stored.
+        if (_workerId.load() == std::this_thread::get_id()){
+            return;
+        }
+        std::lock_guard joinLock(_joinMtx); //two threads calling stop() must not both join
+        if (_thread.joinable()){
+            _thread.join();
         }
     }
 
@@ -63,6 +67,7 @@ public:
 
 private:
     void run() {
+        _workerId.store(std::this_thread::get_id()); //before `work` can run, so a stop() from inside it always sees it
         std::unique_lock lock(_mtx);
         while (!_stop) {
             lock.unlock(); //so stop() and setInterval() never wait on a running tick
@@ -88,6 +93,7 @@ private:
     std::mutex _mtx;
     std::mutex _joinMtx;
     std::atomic<bool> _stop{false};
+    std::atomic<std::thread::id> _workerId{}; //set by the worker itself, default (no thread) until then
     bool _changed = false; //guarded by _mtx
 };
 
