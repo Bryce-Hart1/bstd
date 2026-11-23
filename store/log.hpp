@@ -19,6 +19,8 @@
 #include <string>
 #include <string_view>
 #include <chrono>
+#include <cstddef>
+#include <utility>
 #include <fstream>
 #include <vector>
 #include <stdexcept>
@@ -172,21 +174,21 @@ private:
     // Every line (constructor and write) shares this prefix format.
     void writePrefix(std::ofstream& file, std::size_t index) {
         file << '[' << index << "] ";
-        if (_optionDate) addDate(file);
-        if (_optionTime) addTime(file);
+        const auto now = std::chrono::system_clock::now();
+        if (_optionDate) addDate(file, now);
+        if (_optionTime) addTime(file, now);
     }
 
-    void addDate(std::ofstream& file) {
+    void addDate(std::ofstream& file, const std::chrono::system_clock::time_point now) {
         using namespace std::chrono;
-        const year_month_day ymd{floor<days>(system_clock::now())};
+        const year_month_day ymd{floor<days>(now)};
         file << static_cast<int>(ymd.year()) << '-'
              << static_cast<unsigned>(ymd.month()) << '-'
              << static_cast<unsigned>(ymd.day()) << ' ';
     }
 
-    void addTime(std::ofstream& file) {
+    void addTime(std::ofstream& file, const std::chrono::system_clock::time_point now) {
         using namespace std::chrono;
-        const auto now           = system_clock::now();
         const auto since_midnight = now - floor<days>(now);
         const hh_mm_ss hms{duration_cast<system_clock::duration>(since_midnight)};
         file << hms.hours().count()   << ':'

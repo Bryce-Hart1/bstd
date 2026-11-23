@@ -1,6 +1,7 @@
 #pragma once
 #include <bitset>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <variant>
@@ -12,6 +13,7 @@ namespace details{
 
 inline std::vector<unsigned char> convertToUCvec(const std::vector<std::bitset<8>>& bytes){
     std::vector<unsigned char> r;
+    r.reserve(bytes.size());
     for(const std::bitset<8> byte : bytes){
         r.push_back(static_cast<unsigned char>(byte.to_ulong()));
     }
